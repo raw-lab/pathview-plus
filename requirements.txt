@@ -1,0 +1,13 @@
+# Core dependencies
+polars>=0.19.0
+numpy>=1.24.0
+requests>=2.31.0
+
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+Pillow>=10.0.0
+networkx>=3.1
+
+# Optional but recommended
+lxml>=4.9.0  # For faster XML parsing
