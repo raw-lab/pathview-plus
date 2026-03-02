@@ -605,10 +605,11 @@ GPL v3.0 — See LICENSE file
 
 ## 📞 Support
 
-- **Issues:** https://github.com/yourusername/pathview.py/issues
-- **Discussions:** https://github.com/yourusername/pathview.py/discussions
+- **Issues:** https://github.com/raw-lab/pathview/issues
+- **Discussions:** https://github.com/raw-lab/pathview/discussions
 - **Email:** 
 
+Rwhit101@charlotte.edu 
 ---
 
 **Made with ❤️ for the pathway visualization community**
