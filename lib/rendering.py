@@ -86,6 +86,7 @@ def _paint_gene_nodes(
 
     for row in plot_data.iter_rows(named=True):
         cx, cy   = row["x"], row["y"]
+        cy = h - cy #TODO: Flipped height coordinate to fix
         hw, hh   = row["width"] / 2, row["height"] / 2
         px_l     = max(0, int(cx - hw))
         px_r     = min(img.shape[1], int(cx + hw))
@@ -205,7 +206,7 @@ def keggview_native(
     if new_signature:
         ax_img.text(
             0.02, 0.02, "Rendered by pathview.py",
-            transform=ax_img.transAxes,
+            #transform=ax_img.transAxes, #TODO: This lable looks better on top
             fontsize=6, color="black", fontweight="bold", va="bottom",
         )
 
