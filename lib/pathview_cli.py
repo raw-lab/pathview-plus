@@ -41,7 +41,9 @@ import sys
 
 import polars as pl
 
-from pathview import kegg_legend, pathview, sim_mol_data
+from .rendering import kegg_legend
+from .orchestrator import pathview
+from .mol_data import sim_mol_data
 
 
 # ---------------------------------------------------------------------------

@@ -116,7 +116,7 @@ __all__ = [
 ]
 
 # Import pathview last to avoid circular imports
-from .pathview import pathview  # noqa: E402
+#from .pathview import pathview  # noqa: E402
 
 __version__ = "2.0.0"
 __author__ = "pathview.py contributors"
