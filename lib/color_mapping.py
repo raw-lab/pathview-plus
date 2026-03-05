@@ -79,8 +79,10 @@ def node_color(
     value_cols = [c for c in plot_data.columns if c != "id"]
     result: dict[str, list] = {"id": plot_data["id"].to_list()}
 
+    #TODO: Quick fix, please verify for accuracy
+    vec = np.vectorize(lambda x: int(x.lstrip("#"), 16) if isinstance(x, str) else x)
     for col in value_cols:
-        vals = plot_data[col].to_numpy().astype(float)
+        vals = vec(plot_data[col].to_numpy()).astype(float)
         if trans_fun is not None:
             vals = trans_fun(vals)
         result[f"{col}_col"] = [_value_to_hex(v, cmap, norm, na_col) for v in vals]
