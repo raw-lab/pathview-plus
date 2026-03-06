@@ -86,7 +86,7 @@ def _paint_gene_nodes(
 
     for row in plot_data.iter_rows(named=True):
         cx, cy   = row["x"], row["y"]
-        cy = h - cy #TODO: Flipped height coordinate to fix
+        cy = h - cy # Flip y to convert from math to image coordinate space
         hw, hh   = row["width"] / 2, row["height"] / 2
         px_l     = max(0, int(cx - hw))
         px_r     = min(img.shape[1], int(cx + hw))
@@ -127,6 +127,7 @@ def _paint_cpd_nodes(
 
     for row in plot_data.iter_rows(named=True):
         cx, cy, r = row["x"], row["y"], row["width"]
+        cy = h - cy # Flip y to convert from math to image coordinate space
         dist_sq   = (xx - cx) ** 2 + (yy - cy) ** 2
         inside    = dist_sq < r ** 2
         border    = (dist_sq >= (r - 2) ** 2) & inside
