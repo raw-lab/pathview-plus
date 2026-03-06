@@ -3,7 +3,7 @@ setup.py
 Installation script for pathview.py
 """
 
-from setuptools import find_packages, setup
+from setuptools import setup
 
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
@@ -16,6 +16,7 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/yourusername/pathview.py",
+    scripts=["bin/pathview-cli.py"],
     packages=["pathview"],
     package_dir=dict(pathview='lib'),
     classifiers=[
@@ -48,9 +49,4 @@ setup(
             "lxml>=4.9.0",  # Faster XML parsing
         ],
     },
-    entry_points={
-        "console_scripts": [
-            "pathview-plus=pathview.pathview_cli:main",
-        ],
-    }
 )
