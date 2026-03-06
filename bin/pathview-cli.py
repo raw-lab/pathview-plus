@@ -54,7 +54,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="pathview",
         description="Overlay gene/compound data on KEGG pathway diagrams.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        formatter_class=argparse.RawDescriptionHelpFormatter,#argparse.ArgumentDefaultsHelpFormatter,
         epilog=(
             "Examples:\n"
             "  python pathview.py --pathway-id 04110 --gene-data expr.tsv\n"
@@ -219,6 +219,7 @@ def main(argv: list[str] | None = None) -> None:
         species       = args.species,
         kegg_dir      = args.kegg_dir,
         kegg_native   = args.kegg_native,
+        output_format = args.output_format,
         gene_idtype   = args.gene_idtype,
         cpd_idtype    = args.cpd_idtype,
         out_suffix    = args.out_suffix,
