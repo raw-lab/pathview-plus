@@ -25,7 +25,7 @@ import polars as pl
 # Add pathview to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from pathview import (
+from orchestrator import (
     catmull_rom_spline,
     cubic_bezier,
     pathview,
