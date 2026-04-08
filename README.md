@@ -31,13 +31,22 @@
 
 ## 📦 Installation
 
+### Quick install
+
+```bash
+pip install pathview-plus
+```
+
+### Custom install
+
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/pathview.py
-cd pathview.py
+git clone https://github.com/raw-lab/pathview-plus
+cd pathview-plus
 
 # Install dependencies
 pip install -r requirements.txt
+pip install .
 
 # Or install specific packages
 pip install polars numpy matplotlib seaborn Pillow networkx requests
@@ -605,11 +614,8 @@ GPL v3.0 — See LICENSE file
 
 ## 📞 Support
 
-- **Issues:** https://github.com/raw-lab/pathview/issues
-- **Discussions:** https://github.com/raw-lab/pathview/discussions
-- **Email:** 
-
-Rwhit101@charlotte.edu 
+- **Issues:** https://github.com/raw-lab/pathview-plus/issues
+- **Email:** rwhit101@charlotte.edu 
 ---
 
 **Made with ❤️ for the pathway visualization community**

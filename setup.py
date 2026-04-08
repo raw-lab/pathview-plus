@@ -9,13 +9,13 @@ with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
-    name="pathview_plus",
+    name="pathview-plus",
     version="2.0.0",
     author="Richard Allen White III",
     description="Complete pathway visualization: KEGG + SBGN + highlighting + splines",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/pathview.py",
+    url="https://github.com/raw-lab/pathview-plus",
     scripts=["bin/pathview-cli.py"],
     packages=["pathview"],
     package_dir=dict(pathview='lib'),
@@ -28,6 +28,7 @@ setup(
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
     ],
     python_requires=">=3.10",
     install_requires=[

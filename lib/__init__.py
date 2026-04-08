@@ -47,6 +47,11 @@ Public API
     )
 """
 
+__version__ = "2.0.0"
+__authors__ = 'Richard Allen White III, Jose Luis Figueroa III'
+__description__ = "KEGG + SBGN pathway visualization with Python"
+
+
 from .color_mapping import draw_color_key, make_colormap, node_color
 from .databases import (DATABASE_INFO, detect_database, download_metacyc,
                          download_panther, download_reactome, download_smpdb,
@@ -116,8 +121,4 @@ __all__ = [
 ]
 
 # Import pathview last to avoid circular imports
-#from .pathview import pathview  # noqa: E402
-
-__version__ = "2.0.0"
-__author__ = "pathview.py contributors"
-__description__ = "KEGG + SBGN pathway visualization with Python"
+from .pathview import pathview  # noqa: E402

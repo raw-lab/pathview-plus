@@ -25,7 +25,7 @@ import polars as pl
 # Add pathview to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from orchestrator import (
+from pathview import (
     catmull_rom_spline,
     cubic_bezier,
     pathview,
@@ -79,7 +79,7 @@ def test_3_reactome():
     print("\n" + "="*70)
     print("TEST 3: Reactome SBGN Pathway")
     print("="*70)
-    
+    #TODO: Create test for this when server is working
     print("⚠ Requires internet connection to download Reactome pathway")
     print("⚠ Skipping for offline testing - see README for full example")
     return True

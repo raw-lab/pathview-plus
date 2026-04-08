@@ -299,6 +299,8 @@ def keggview_graph(
         fig, ax = plt.subplots(figsize=(14, 10))
         ax.set_title(pathway_name, fontsize=12, fontweight="bold")
 
+        #TODO: Temporary fix, update prior steps that use transparent instead of none
+        node_colors = ['none' if x=='transparent' else x for x in node_colors]
         nx.draw_networkx(
             G,
             pos=pos,

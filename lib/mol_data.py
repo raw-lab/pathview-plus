@@ -69,6 +69,9 @@ def mol_sum(
     id_col     = mol_data.columns[0]
     src_col, tgt_col = id_map.columns[:2]
 
+    #TODO: Temporary fix, check earlier steps to prevent the need to do this
+    mol_data = mol_data.cast({id_col: pl.String})
+
     # Rename id_map columns to neutral names for the join
     mapping = id_map.rename({src_col: id_col, tgt_col: "__target"})
 
