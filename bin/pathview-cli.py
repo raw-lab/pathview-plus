@@ -211,8 +211,8 @@ def main(argv: list[str] | None = None) -> None:
             "Provide at least one of --gene-data, --cpd-data, or --simulate."
         )
 
-    # Cast all columns to string for merging
-    gene_data = gene_data.cast(pl.String)
+    # Cast ID column to string for merging
+    gene_data = gene_data.cast({gene_data.columns[0]: pl.String})
 
     # -- Run pathview --------------------------------------------------------
     result = pathview(
