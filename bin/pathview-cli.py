@@ -42,7 +42,7 @@ import sys
 import polars as pl
 
 from pathview.rendering import kegg_legend
-from pathview.orchestrator import pathview
+from pathview import pathview
 from pathview.mol_data import sim_mol_data
 
 
@@ -210,6 +210,9 @@ def main(argv: list[str] | None = None) -> None:
         _build_parser().error(
             "Provide at least one of --gene-data, --cpd-data, or --simulate."
         )
+
+    # Cast all columns to string for merging
+    gene_data = gene_data.cast(pl.String)
 
     # -- Run pathview --------------------------------------------------------
     result = pathview(

@@ -1,6 +1,6 @@
 """
 setup.py
-Installation script for pathview.py
+Installation script for pathview-plus
 """
 
 from setuptools import setup
@@ -10,7 +10,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="pathview-plus",
-    version="2.0.0",
+    version="2.0.1",
     author="Richard Allen White III",
     description="Complete pathway visualization: KEGG + SBGN + highlighting + splines",
     long_description=long_description,
