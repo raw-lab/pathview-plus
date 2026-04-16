@@ -607,7 +607,7 @@ GPL v3.0 — See LICENSE file
 **Citations:**
 
 If you are publishing results obtained using Pathview-Plus, please cite: <br />
-- Peer-Print Pathview-Plus: Figueroa III JL, Brouwer CR, White III RA. 2026. Pathview-plus: unlocking the metabolic pathways from cells to ecosystems. bioRxiv.
+- Pre-Print Pathview-Plus: Figueroa III JL, Brouwer CR, White III RA. 2026. Pathview-plus: unlocking the metabolic pathways from cells to ecosystems. bioRxiv.
 
 If you using the R version please cite: <br />
 - Original Pathview R: Luo, W., & Brouwer, C. 2013. Pathview: an R/Bioconductor package for pathway-based data integration and visualization. Bioinformatics, 29(14), 1830–1831. [Pathview](https://doi.org/10.1093/bioinformatics/btt285)
