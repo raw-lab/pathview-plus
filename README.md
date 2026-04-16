@@ -605,17 +605,26 @@ Contributions welcome! Areas for improvement:
 GPL v3.0 — See LICENSE file
 
 **Citations:**
-- Original R pathview: Luo & Brouwer (2013). Bioinformatics
-- SBGNview: Shashikant et al. (2022). Bioinformatics
-- KEGG: Kanehisa et al. (2023). Nucleic Acids Research
-- Reactome: Gillespie et al. (2022). Nucleic Acids Research
+
+If you are publishing results obtained using Pathview-Plus, please cite: <br />
+- Peer-Print Pathview-Plus: Figueroa III JL, Brouwer CR, White III RA. 2026. Pathview-plus: unlocking the metabolic pathways from cells to ecosystems. bioRxiv.
+
+If you using the R version please cite: <br />
+- Original Pathview R: Luo, W., & Brouwer, C. 2013. Pathview: an R/Bioconductor package for pathway-based data integration and visualization. Bioinformatics, 29(14), 1830–1831. [Pathview](https://doi.org/10.1093/bioinformatics/btt285)
+- Original SBGNview R: Shashikant, T., et al. 2022. SBGNview: Data analysis, integration and visualization on all pathways using SBGN. Bioinformatics, 38(11), 3006–3008. [SBGNview](https://doi.org/10.1093/bioinformatics/btab793) 
+
+---
+
+## Contributing to Pathview-plus
+
+We welcome contributions of other experts expanding features in Pathview-plus including the R and python versions. Please contact us via support. 
 
 ---
 
 ## 📞 Support
 
-- **Issues:** https://github.com/raw-lab/pathview-plus/issues
-- **Email:** rwhit101@charlotte.edu 
+- **Issues:** [open an issue](https://github.com/raw-lab/metacerberus/issues).  
+- **Email:** [Dr. Richard Allen White III](mailto:rwhit101@uncc.edu)
 ---
 
 **Made with ❤️ for the pathway visualization community**
