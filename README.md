@@ -602,7 +602,7 @@ Contributions welcome! Areas for improvement:
 
 ## 📄 License
 
-GPL v3.0 — See LICENSE file
+Creative Commons Attribution-NonCommercial (CC BY-NC 4.0) — See LICENSE file
 
 **Citations:**
 
