@@ -3,7 +3,6 @@
 **Full-featured Python implementation of R pathview + SBGNview with support for KEGG, Reactome, MetaCyc, and more.**
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 ---
 
@@ -623,7 +622,7 @@ We welcome contributions of other experts expanding features in Pathview-plus in
 
 ## 📞 Support
 
-- **Issues:** [open an issue](https://github.com/raw-lab/metacerberus/issues).  
+- **Issues:** [open an issue](https://github.com/raw-lab/pathview-plus/issues).  
 - **Email:** [Dr. Richard Allen White III](mailto:rwhit101@uncc.edu)
 ---
 
