@@ -63,6 +63,10 @@ pip install polars numpy matplotlib seaborn Pillow networkx requests
 
 ---
 
+[Pathview-plus](https://github.com/raw-lab/pathview-plus/blob/main/pathview_plus_workflow.svg)
+
+
+----
 ## 🚀 Quick Start
 
 ### 1. Basic KEGG Pathway
