@@ -10,7 +10,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="pathview-plus",
-    version="2.0.1",
+    version="2.0.2",
     author="Richard Allen White III",
     description="Complete pathway visualization: KEGG + SBGN + highlighting + splines",
     long_description=long_description,
@@ -23,7 +23,6 @@ setup(
         "Development Status :: 4 - Beta",
         "Intended Audience :: Science/Research",
         "Topic :: Scientific/Engineering :: Bio-Informatics",
-        "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
