@@ -1,0 +1,8 @@
+data/ export-ignore
+dist/ export-ignore
+doc/ export-ignore
+man/ export-ignore
+results/ export-ignore
+src/ export-ignore
+run-test.sh export-ignore
+.* export-ignore
