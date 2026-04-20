@@ -63,7 +63,7 @@ pip install polars numpy matplotlib seaborn Pillow networkx requests
 
 ---
 
-![workflow](https://raw.githubusercontent.com/raw-lab/pathview-plus/main/pathview_plus_workflow.svg)
+![workflow](https://raw.githubusercontent.com/raw-lab/pathview-plus/main/pathview_plus_workflow.jpg)
 
 
 ----
