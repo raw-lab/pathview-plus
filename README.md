@@ -601,13 +601,15 @@ Contributions welcome! Areas for improvement:
 4. **Highlighting** — Wire up image modification backend
 5. **Performance** — Parallel pathway processing
 
+We welcome contributions of other experts expanding features in Pathview-plus including the R and python versions. Please contact us via support. 
+
 ---
 
 ## 📄 License
 
 Creative Commons Attribution-NonCommercial (CC BY-NC 4.0) — See LICENSE file
 
-**Citations:**
+## 📚 Citing
 
 If you are publishing results obtained using Pathview-Plus, please cite: <br />
 - Pre-Print Pathview-Plus: Figueroa III JL, Brouwer CR, White III RA. 2026. Pathview-plus: unlocking the metabolic pathways from cells to ecosystems. bioRxiv.
@@ -615,12 +617,6 @@ If you are publishing results obtained using Pathview-Plus, please cite: <br />
 If you using the R version please cite: <br />
 - Original Pathview R: Luo, W., & Brouwer, C. 2013. Pathview: an R/Bioconductor package for pathway-based data integration and visualization. Bioinformatics, 29(14), 1830–1831. [Pathview](https://doi.org/10.1093/bioinformatics/btt285)
 - Original SBGNview R: Shashikant, T., et al. 2022. SBGNview: Data analysis, integration and visualization on all pathways using SBGN. Bioinformatics, 38(11), 3006–3008. [SBGNview](https://doi.org/10.1093/bioinformatics/btab793) 
-
----
-
-## Contributing to Pathview-plus
-
-We welcome contributions of other experts expanding features in Pathview-plus including the R and python versions. Please contact us via support. 
 
 ---
 
