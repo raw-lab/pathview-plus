@@ -3,6 +3,7 @@
 **Full-featured Python implementation of R pathview + SBGNview with support for KEGG, Reactome, MetaCyc, and more.**
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![PyPI Downloads](https://static.pepy.tech/personalized-badge/pathview-plus?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/pathview-plus)
 
 ---
 
