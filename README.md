@@ -1,31 +1,46 @@
 # Pathview-plus — Complete Pathway Visualization
 
-**Full-featured Python implementation of R pathview + SBGNview with support for KEGG, Reactome, MetaCyc, and more.**
+**Full-featured Python implementation of R pathview + SBGNview, with support for KEGG, Reactome, MetaCyc, PANTHER, SMPDB and MetaCrop.**
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![PyPI Downloads](https://static.pepy.tech/personalized-badge/pathview-plus?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/pathview-plus)
+[![CI](https://github.com/raw-lab/pathview-plus/actions/workflows/ci.yml/badge.svg)](https://github.com/raw-lab/pathview-plus/actions/workflows/ci.yml)
+[![Docs](https://readthedocs.org/projects/pathview-plus/badge/?version=latest)](https://pathview-plus.readthedocs.io)
+[![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC%20BY--NC%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc/4.0/)
 
 ---
 
 ## 🎯 Features
 
-### Core Capabilities
-- ✅ **KEGG Pathways** — Download and visualize any KEGG pathway
-- ✅ **SBGN Pathways** — Support for Reactome, MetaCyc, PANTHER, SMPDB
-- ✅ **Multiple Formats** — PNG (native overlay), SVG (vector), PDF (graph layout)
-- ✅ **Gene & Metabolite Data** — Overlay expression and abundance data
-- ✅ **Multi-Condition** — Visualize multiple experiments side-by-side
-- ✅ **ID Conversion** — Automatic mapping: Entrez ↔ Symbol ↔ UniProt ↔ Ensembl
-- ✅ **Highlighting** — Post-hoc emphasis of specific nodes/edges/paths
-- ✅ **Spline Curves** — Smooth Bezier edge routing
-- ✅ **Custom Colors** — Configurable diverging color scales
+### Core capabilities
 
-### New in v2.0
-- 🆕 **Full SBGN-ML support** — Parse and render SBGN Process Description files
-- 🆕 **Database integration** — Direct download from Reactome, MetaCyc
-- 🆕 **SVG vector output** — Scalable graphics for web and publication
-- 🆕 **Highlighting system** — ggplot2-style composable modifications
-- 🆕 **Spline rendering** — Cubic Bezier and Catmull-Rom curves
+- ✅ **KEGG pathways** — download and visualise any KEGG pathway, 10,718 organisms
+- ✅ **SBGN pathways** — Reactome, MetaCyc, PANTHER, SMPDB, MetaCrop
+- ✅ **Five render modes** — native overlay, vector, SVG, graph, auto
+- ✅ **Gene *and* metabolite data** — with **independent colour scales and two colour keys**
+- ✅ **Multi-condition** — each node splits into one band per experiment
+- ✅ **ID conversion** — Entrez ↔ Symbol ↔ UniProt ↔ Ensembl ↔ KEGG ↔ ChEBI ↔ Pathway Commons
+- ✅ **Highlighting** — composable, ggplot2-style post-hoc emphasis
+- ✅ **Batch rendering** — many pathways in one call, partial failure preserved
+- ✅ **Compartment shading** — nested, labelled, opacity-ordered
+- ✅ **Complex splitting** — `split_group` and `expand_node`, area-preserving
+- ✅ **Works offline** — species, compound names, crosswalks and vector rendering need no network
+
+### New in v3.1
+
+- 🆕 **Pre-generated SBGN collection** — 5,206 pathways indexed *inside the wheel*
+- 🆕 **PANTHER / MetaCyc / SMPDB / MetaCrop auto-download** — no manual step
+- 🆕 **`sbgnview()`** — the SBGN counterpart to `pathview()`
+- 🆕 **770k identifier crosswalk pairs** bundled, with breadth-first routing
+- 🆕 **Multi-pathway batch** returning a `PathwayResultSet`
+- 🆕 **`read_rdata()`** — read R `.RData` files without R
+
+### New in v3.0
+
+- 🆕 **21 confirmed bugs fixed**, each with a regression test — see [BUG_CHECKLIST.md](BUG_CHECKLIST.md)
+- 🆕 **Vector renderer** — draws the map from KGML coordinates, no background image needed
+- 🆕 **Typed errors and mapping diagnostics** instead of silent empty results
+- 🆕 **Full CLI** and a **316-test offline suite**
 
 ---
 
@@ -37,322 +52,280 @@
 pip install pathview-plus
 ```
 
-### Custom install
+### From source
 
 ```bash
-# Clone repository
 git clone https://github.com/raw-lab/pathview-plus
 cd pathview-plus
-
-# Install dependencies
-pip install -r requirements.txt
 pip install .
-
-# Or install specific packages
-pip install polars numpy matplotlib seaborn Pillow networkx requests
 ```
 
-**Dependencies:**
-- Python ≥ 3.10
-- polars ≥ 0.19.0
-- matplotlib ≥ 3.7.0
-- seaborn ≥ 0.12.0
-- numpy ≥ 1.24.0
-- Pillow ≥ 10.0.0
-- networkx ≥ 3.1
-- requests ≥ 2.31.0
+### With optional extras
+
+```bash
+pip install "pathview-plus[layouts]"   # SciPy, for the kamada_kawai graph layout
+pip install "pathview-plus[dev]"       # pytest, ruff, build
+pip install "pathview-plus[docs]"      # Sphinx toolchain
+```
+
+**Dependencies:** Python ≥ 3.10 · polars ≥ 1.0 · numpy ≥ 1.24 · matplotlib ≥ 3.7 · networkx ≥ 3.0 · Pillow ≥ 10.0 · requests ≥ 2.28
+
+Verify the install and see what shipped with it:
+
+```bash
+pathview-plus info
+pathview-plus sbgn --list
+python -m pathview.test_all_features    # offline smoke test, ~2 seconds
+```
 
 ---
 
 ![workflow](https://raw.githubusercontent.com/raw-lab/pathview-plus/main/pathview_plus_workflow.jpg)
 
+---
 
-----
-## 🚀 Quick Start
+## 🚀 Quick start
 
-### 1. Basic KEGG Pathway
+### 1. Basic KEGG pathway
 
 ```python
 import polars as pl
 from pathview import pathview
 
-# Load your data
 gene_data = pl.read_csv("gene_expr.tsv", separator="\t")
 
-# Visualize on KEGG pathway
 result = pathview(
-    pathway_id="04110",      # Cell cycle
+    "04110",                 # Cell cycle
     gene_data=gene_data,
-    species="hsa",
-    output_format="png"
+    species="hsa",           # or "human", "Homo sapiens", "9606"
+    output_format="png",
 )
+print(result.summary())
 ```
 
-### 2. Reactome SBGN Pathway
+### 2. Genes *and* metabolites, on separate scales
 
-```python
-from pathview import download_reactome, parse_sbgn, sbgn_to_df, pathview
-
-# Download Reactome pathway
-path = download_reactome("R-HSA-109582")  # Hemostasis
-
-# Parse and visualize
-pathway = parse_sbgn(path)
-node_df = sbgn_to_df(pathway)
-
-# Overlay data
-result = pathview(
-    pathway_id="R-HSA-109582",
-    gene_data=gene_data,
-    output_format="svg"  # Vector graphics
-)
-```
-
-### 3. Multi-Condition Comparison
-
-```python
-# Three experimental conditions
-gene_data = pl.DataFrame({
-    "entrez": ["1956", "2099", "5594", "207"],
-    "Control": [0.5, -0.3, 1.2, -0.8],
-    "Treatment_A": [2.1, -1.5, 0.4, 1.3],
-    "Treatment_B": [1.8, -0.9, 2.3, 0.7],
-})
-
-result = pathview(
-    pathway_id="04010",  # MAPK signaling
-    gene_data=gene_data,
-    species="hsa",
-    limit={"gene": 2.5, "cpd": 1.5},
-)
-# Each node shows 3 color bands (one per condition)
-```
-
-### 4. Custom Color Schemes
+This is the case the package is built around. A transcript at +2 and a
+metabolite at +2 are not the same statement, so they get **independent scales
+and independent keys**.
 
 ```python
 result = pathview(
-    pathway_id="04151",
-    gene_data=gene_data,
-    species="hsa",
-    low={"gene": "#2166AC", "cpd": "#4575B4"},   # Blue
-    mid={"gene": "#F7F7F7", "cpd": "#F7F7F7"},   # White
-    high={"gene": "#D6604D", "cpd": "#B2182B"},  # Red
-)
-```
-
----
-
-## 📖 Complete Examples
-
-### Example 1: Gene Symbol IDs
-
-```python
-gene_data = pl.DataFrame({
-    "symbol": ["TP53", "EGFR", "KRAS", "PIK3CA", "AKT1"],
-    "log2fc": [-1.8, 2.4, 1.1, 1.5, 0.9],
-})
-
-result = pathview(
-    pathway_id="04151",
-    gene_data=gene_data,
-    species="hsa",
-    gene_idtype="SYMBOL",  # Automatic conversion to Entrez
-)
-```
-
-### Example 2: Combined Gene + Metabolite
-
-```python
-from pathview import sim_mol_data
-
-gene_data = sim_mol_data(mol_type="gene", species="hsa", n_mol=80)
-cpd_data = sim_mol_data(mol_type="cpd", n_mol=30)
-
-result = pathview(
-    pathway_id="00010",  # Glycolysis
-    gene_data=gene_data,
-    cpd_data=cpd_data,
-    species="hsa",
-    low={"gene": "green", "cpd": "blue"},
-    high={"gene": "red", "cpd": "yellow"},
-)
-```
-
-### Example 3: SVG Vector Output
-
-```python
-result = pathview(
-    pathway_id="04110",
-    gene_data=gene_data,
-    species="hsa",
-    output_format="svg",  # Scalable vector graphics
-)
-# Output: hsa04110.pathview.svg
-# - Scalable without quality loss
-# - Smaller file size
-# - Editable in Inkscape/Illustrator
-```
-
-### Example 4: Graph Layout (No PNG Background)
-
-```python
-result = pathview(
-    pathway_id="04010",
-    gene_data=gene_data,
-    species="hsa",
-    kegg_native=False,     # Use NetworkX layout
+    "00020",                             # TCA cycle
+    gene_data=rna_df,
+    cpd_data=metabolite_df,
+    species="human",
+    limit={"gene": 2.0, "cpd": 1.5},     # different scales, different limits
+    gene_color="rnaseq",                 # green → grey → red
+    cpd_color="metabolite",              # blue → white → amber
+    render_mode="vector",
     output_format="pdf",
 )
-# Output: hsa04010.pathview.pdf
 ```
 
-### Example 5: Highlighting (API Preview)
+Metabolomics platforms export names, not accessions. `cpd_idtype="NAME"`
+resolves them offline, including conjugate-base forms — *Pyruvate* finds
+*Pyruvic acid*, *Citrate* finds *Citric acid*:
 
 ```python
-from pathview import highlight_nodes, highlight_path
-
-result = pathview("04010", gene_data=data)
-
-# Composable modifications (ggplot2-style)
-highlighted = (result
-               + highlight_nodes(["1956", "2099"], color="red", width=4)
-               + highlight_path(["1956", "2099", "5594"], color="orange"))
-
-highlighted.save("highlighted.png")
+cpds = pl.DataFrame({
+    "name":   ["Pyruvate", "Citrate", "2-Oxoglutarate", "Succinate"],
+    "log2fc": [ 1.4,       -0.8,       0.3,              -1.6],
+})
+result = pathview("00020", cpd_data=cpds, cpd_idtype="NAME", species="hsa")
 ```
 
-### Example 6: Spline Curves
+### 3. SBGN pathways
+
+`sbgnview()` is to SBGN what `pathview()` is to KEGG.
 
 ```python
-from pathview import cubic_bezier, catmull_rom_spline
-import matplotlib.pyplot as plt
+from pathview import sbgnview, list_sbgn_pathways
 
-# Smooth Bezier curve
-curve = cubic_bezier((0,0), (1,2), (3,2), (4,0), n_points=100)
+list_sbgn_pathways("panther", limit=5)      # browse offline
 
-plt.plot(curve[:, 0], curve[:, 1], linewidth=2)
-plt.title("Bezier Curve Edge Routing")
-plt.savefig("bezier_example.png")
+result = sbgnview(
+    "SMP00001",                # or P00001, GLYCOLYSIS, R-HSA-109688
+    gene_data=gene_data,
+    gene_idtype="SYMBOL",      # densest offline route — see the note below
+    show_compartments=True,
+)
 ```
 
-### Example 7: Batch Processing
+A file exported by hand from any SBGN source parses identically — there is no
+second code path:
 
 ```python
-pathways = ["04110", "04010", "04151", "00010"]
-
-for pw_id in pathways:
-    try:
-        result = pathview(
-            pathway_id=pw_id,
-            gene_data=gene_data,
-            species="hsa",
-            out_suffix=f"batch_{pw_id}",
-        )
-        print(f"✓ Completed {pw_id}")
-    except Exception as e:
-        print(f"✗ Failed {pw_id}: {e}")
+result = sbgnview("downloads/my_export.sbgn", gene_data=gene_data)
 ```
+
+### 4. Multi-condition comparison
+
+```python
+gene_data = pl.DataFrame({
+    "entrez":      ["1956", "2099", "5594", "207"],
+    "Control":     [ 0.5,   -0.3,    1.2,   -0.8],
+    "Treatment_A": [ 2.1,   -1.5,    0.4,    1.3],
+    "Treatment_B": [ 1.8,   -0.9,    2.3,    0.7],
+})
+
+result = pathview("04010", gene_data=gene_data, species="hsa", limit=2.5)
+# Each node shows three colour bands, one per condition
+```
+
+### 5. Batch rendering
+
+Pass a sequence and get a `PathwayResultSet`. One unavailable pathway does not
+discard the rest.
+
+```python
+rs = pathview(["04110", "04010", "04151", "00010"],
+              gene_data=gene_data, species="hsa")
+
+print(rs.summary())
+rs.to_frame()                  # one row per pathway with status
+rs["04110"].output_path        # index by id, by position, or iterate
+```
+
+### 6. Highlighting
+
+```python
+from pathview import highlight_nodes, highlight_path, change_labels
+
+result = pathview("04010", gene_data=gene_data, species="hsa")
+
+annotated = (result
+             + highlight_nodes(["1956", "2099"], color="red", width=4)
+             + highlight_path(["1956", "2099", "5594"], color="orange")
+             + change_labels({"1956": "EGFR *"}))
+
+annotated.save("highlighted.png")
+```
+
+Each `+` returns a new result; the original is untouched. Highlights are drawn
+through an explicit KGML↔raster transform, so they land on the nodes they mark
+in every render mode.
+
+### 7. Complexes and paralogue families
+
+A KEGG group entry stacks several subunits in one box; a single entry may carry
+several gene ids (`CDK4, CDK6`). One colour across either hides disagreement
+between members.
+
+```python
+result = pathview("04110", gene_data=gene_data, species="hsa",
+                  split_group=True,     # complexes → their subunits
+                  expand_node=True)     # multi-gene nodes → one node per gene
+
+print(result.diagnostics["expansion"])
+# 115 -> 96 nodes; 19 complexes split; 96 -> 170 nodes; 35 multi-gene nodes expanded
+```
+
+Sub-nodes tile the original box exactly, so the layout is unchanged, and edges
+are remapped onto them.
+
+### 8. Custom colour scale
+
+```python
+from pathview import ColorScale
+
+scale = ColorScale(limit=(-3, 3), bins=12,
+                   low="#2166AC", mid="#F7F7F7", high="#B2182B",
+                   label="log2 FC (tumour / normal)")
+
+result = pathview("04151", gene_data=gene_data, species="hsa",
+                  gene_color=scale)
+```
+
+### 9. Working offline
+
+```python
+from pathview import pathview, set_offline
+
+set_offline(True)                  # or export PATHVIEW_OFFLINE=1
+
+result = pathview("00020", gene_data=gene_data, species="hsa",
+                  kegg_dir="/data/kgml",     # contains hsa00020.xml
+                  render_mode="vector")      # draws the map itself
+```
+
+Species resolution, compound naming, identifier crosswalks and vector
+rendering all keep working — those tables ship inside the package.
 
 ---
 
-## 🖥️ Command Line Interface
+## 🖥️ Command line
 
 ```bash
-# Basic usage
-python pathview_cli.py --pathway-id 04110 --gene-data expr.tsv
+# KEGG
+pathview-plus render 00020 --species human \
+    --gene-data rnaseq.csv --cpd-data metabolites.csv \
+    --render-mode vector --output-format pdf --limit gene=2,cpd=1
 
-# Specify species and ID type
-python pathview_cli.py \
-    --pathway-id 04110 \
-    --species hsa \
-    --gene-data expr.tsv \
-    --gene-idtype SYMBOL
+# Several pathways at once
+pathview-plus render 04110 04010 00010 --gene-data rna.csv -o figures
 
-# Custom colors
-python pathview_cli.py \
-    --pathway-id 04010 \
-    --gene-data expr.tsv \
-    --low-gene '#2166AC' \
-    --high-gene '#D6604D' \
-    --output-format svg
+# Complexes and paralogues
+pathview-plus render 04110 --gene-data rna.csv --split-group --expand-node
 
-# Simulate data (for testing)
-python pathview_cli.py \
-    --pathway-id 04110 \
-    --simulate \
-    --n-sim 200
+# SBGN
+pathview-plus sbgn --list                          # what's in the collection
+pathview-plus sbgn --list --source panther -n 20
+pathview-plus sbgn SMP00001 --gene-data rna.csv --gene-idtype SYMBOL
 
-# Display KEGG legend
-python pathview_cli.py --legend
+# Utilities
+pathview-plus species 'Mus musculus'
+pathview-plus search coli --limit 5
+pathview-plus download hsa04110 -o kgml
+pathview-plus legend --out legend.png
+pathview-plus parity --markdown > PARITY.md
+pathview-plus info
 ```
 
-**CLI Arguments:**
+**Key `render` options**
 
-```
-Pathway:
-  --pathway-id ID          KEGG pathway number (e.g., '04110')
+| Option | Meaning |
+|---|---|
+| `--species`, `-s` | code, name or taxid (`hsa`, `human`, `9606`) |
+| `--gene-data` / `--cpd-data` | CSV/TSV: ids in column 1, values after |
+| `--gene-idtype` | `ENTREZ`, `SYMBOL`, `ENSEMBL`, `UNIPROT`, `REFSEQ`, `KEGG` |
+| `--cpd-idtype` | `KEGG`, `NAME`, `CAS`, `CHEBI`, `HMDB`, `PUBCHEM` |
+| `--render-mode` | `auto`, `native`, `vector`, `graph`, `svg` |
+| `--output-format`, `-f` | `png`, `pdf`, `svg` |
+| `--limit` | `1.5`, or `gene=2,cpd=1` for separate scales |
+| `--node-sum` | `sum`, `mean`, `median`, `max`, `min`, `max_abs`, `random`, `first` |
+| `--split-group` / `--expand-node` | split complexes / expand paralogue families |
+| `--theme` | `publication`, `slate`, `dark` |
+| `--offline` | never attempt a network request |
 
-Input data:
-  --gene-data TSV          Gene expression file (TSV)
-  --cpd-data TSV           Compound abundance file (TSV)
-  --gene-idtype TYPE       Gene ID type: ENTREZ, SYMBOL, UNIPROT, ENSEMBL
-  --cpd-idtype TYPE        Compound ID type: KEGG, PUBCHEM, CHEBI
-
-Species & paths:
-  --species CODE           KEGG species code (default: hsa)
-  --kegg-dir DIR           Directory for files (default: .)
-  --out-suffix SUFFIX      Output filename suffix (default: pathview)
-
-Rendering:
-  --kegg-native            Use KEGG PNG background (default: True)
-  --output-format FORMAT   Output format: png, pdf, svg (default: png)
-  --map-symbol             Replace Entrez with symbols (default: True)
-  --node-sum METHOD        Aggregation: sum, mean, median, max
-  --no-signature           Suppress watermark
-  --no-col-key             Suppress color legend
-
-Color scale:
-  --limit-gene FLOAT       Color scale limit (default: 1.0)
-  --bins-gene INT          Color bins (default: 10)
-  --low-gene COLOR         Low-end color (default: green)
-  --mid-gene COLOR         Mid-point color (default: gray)
-  --high-gene COLOR        High-end color (default: red)
-  --low-cpd COLOR          Low compound color (default: blue)
-  --high-cpd COLOR         High compound color (default: yellow)
-
-Utilities:
-  --legend                 Display KEGG legend and exit
-  --simulate               Generate simulated data
-  --n-sim INT              Number of simulated molecules (default: 200)
-```
+Either data file may be given alone — a metabolomics-only run is fully
+supported.
 
 ---
 
-## 📊 Input File Formats
+## 📊 Input file formats
 
-### Gene Data (TSV)
+First column = identifiers, remaining numeric columns = one per condition.
 
-First column = gene IDs, remaining columns = numeric expression values.
+**Gene data**
 
 ```tsv
 entrez	Control	Treatment_A	Treatment_B
 1956	2.31	0.45	1.82
 2099	-1.14	-0.88	0.33
 5594	0.72	1.33	-0.51
-207	-0.88	1.21	0.94
 ```
 
-### Gene Symbols
+**Gene symbols** — pass `gene_idtype="SYMBOL"`
 
 ```tsv
-gene_symbol	log2fc	p_value
-TP53	-1.8	0.001
-EGFR	2.4	0.0001
-KRAS	1.1	0.01
+symbol	log2fc
+TP53	-1.8
+EGFR	2.4
+KRAS	1.1
 ```
 
-### Compound Data (TSV)
+**Compound data** — accessions or names
 
 ```tsv
 kegg	abundance
@@ -361,270 +334,324 @@ C00118	-0.83
 C00022	2.11
 ```
 
+Non-numeric columns after the first are reported and skipped rather than
+silently misread.
+
 ---
 
-## 🎨 Color Scale Configuration
+## 🖼️ Render modes
 
-### Three-Point Diverging Scale
+| Mode | Draws | Needs KEGG PNG | Vector |
+|---|---|:--:|:--:|
+| `native` | data painted onto KEGG's own map image | yes | no |
+| `vector` | the map redrawn from KGML coordinates | no | yes |
+| `svg` | a standalone SVG document | no | yes |
+| `graph` | a NetworkX node-link diagram | no | yes |
+| `auto` | `native` if the PNG is present, else `vector` | no | depends |
+
+`native` preserves KEGG's own labels — dark pixels are left untouched, so gene
+symbols survive the overlay. `vector` is the one for figures that get resized,
+and the only one that works with no KEGG image at all.
+
+---
+
+## 🎨 Colour scales
+
+Default anchors are **R pathview's exact defaults** (`#00FF00` / `#BEBEBE` /
+`#FF0000`), so output is directly comparable to an R figure. Binning
+reproduces R's `cut(..., right = FALSE, include.lowest = TRUE)` and
+`colorpanel2()` exactly, including the odd-*n* midpoint rule.
+
+```python
+from pathview import list_palettes
+list_palettes()
+# pathview, pathview_soft, rdbu, rdylbu, viridis, cividis,
+# rnaseq, metabolite, bluered, tealrose, purpleorange
+```
+
+Values beyond the limits are **clamped, not dropped**. `discrete=True` is
+honoured only when the limits are integral and the range divides evenly into
+the bins — the same gate R applies, with a warning when it does not.
+
+---
+
+## 🗂️ Supported ID types
+
+**Gene** — `ENTREZ`, `SYMBOL`, `UNIPROT`, `ENSEMBL`, `REFSEQ`, `KEGG`, `KO`,
+`ALIAS`, `HGNC`, `MGI`, and more via `supported_gene_idtypes()`
+
+**Compound** — `KEGG`, `NAME`, `CAS`, `CHEBI`, `HMDB`, `PUBCHEM`, `DRUGBANK`,
+`LIPIDMAPS`, `CHEMBL`, `KNAPSACK`, and more via `supported_cpd_idtypes()`
+
+**SBGN glyph ids** — Pathway Commons glyph ids are opaque hashes. 770k
+crosswalk pairs ship in the wheel, and routing between any two types is
+breadth-first over the crosswalk graph:
+
+```python
+from pathview import id_route, map_ids_to_sbgn, crosswalk_routes
+
+id_route("ENTREZ", "SYMBOL")
+# ['entrez', 'ko', 'pathwaycommons', 'symbol']
+
+map_ids_to_sbgn(["1017"], "ENTREZ", "SYMBOL")
+crosswalk_routes()          # every conversion the bundled table supports
+```
+
+---
+
+## 🧬 Supported databases
+
+| Database | Format | Coverage | Download |
+|---|---|--:|---|
+| **KEGG** | KGML + PNG | 10,718 organisms | `download_kegg` — REST API |
+| **Reactome** | SBGN-ML | all, +1,749 offline | `download_reactome` — live exporter, collection fallback |
+| **MetaCyc** | SBGN-ML | 2,518 | `download_metacyc` |
+| **SMPDB** | SBGN-ML | 725 | `download_smpdb` |
+| **PANTHER** | SBGN-ML | 152 | `download_panther` |
+| **MetaCrop** | SBGN-ML | 62 | `download_metacrop` |
+
+**5,206 pre-generated SBGN pathways** are indexed inside the wheel, so browsing
+and searching work offline. The SBGN-ML itself (~690 MB in total) is fetched
+per pathway on first use and cached.
+
+None of PANTHER, MetaCyc or SMPDB publishes a per-pathway SBGN endpoint. The
+pre-generated collection does — which is why these are now real downloads
+rather than a manual step.
+
+---
+
+## 🏗️ Repository layout
+
+```
+pathview-plus/
+├── lib/                      # package source — installs as `pathview`
+│   ├── __init__.py           #   public API (155 exports)
+│   ├── pathview.py           #   KEGG orchestrator
+│   ├── sbgnview.py           #   SBGN orchestrator
+│   ├── cli.py                #   command-line interface
+│   │
+│   ├── organisms.py          #   10,718-organism offline table
+│   ├── constants.py  errors.py  utils.py  cache.py  bundled.py
+│   │
+│   ├── kgml_parser.py        #   KEGG KGML
+│   ├── sbgn_parser.py        #   SBGN-ML (namespace- and port-aware)
+│   ├── expansion.py          #   split_group / expand_node
+│   │
+│   ├── id_mapping.py         #   gene & compound ID conversion
+│   ├── sbgn_hub.py           #   SBGN collection + crosswalks
+│   ├── mol_data.py           #   aggregation, demo data
+│   ├── node_mapping.py       #   data → nodes
+│   ├── rdata.py              #   read R .RData without R
+│   │
+│   ├── color_mapping.py      #   ColorScale, R-parity binning
+│   ├── layout.py             #   geometry, RasterFrame
+│   ├── splines.py            #   Bezier / Catmull-Rom
+│   │
+│   ├── rendering.py          #   native raster overlay
+│   ├── vector_rendering.py   #   publication vector renderer
+│   ├── svg_rendering.py      #   standalone SVG
+│   ├── graph_rendering.py    #   NetworkX graph view
+│   ├── legend.py  highlighting.py  databases.py  parity.py  examples.py
+│   │
+│   └── data/                 #   bundled tables: organisms, compounds,
+│                             #     crosswalks, SBGN index, demo data
+├── bin/
+│   └── pathview-cli.py       # direct-run launcher
+├── tests/                    # 317 tests, all offline
+├── docs/                     # Sphinx source
+├── recipe/                   # Bioconda recipe
+├── .github/workflows/ci.yml  # 4 Python versions × 3 operating systems
+├── setup.py                  # shim; metadata lives in pyproject.toml
+├── pyproject.toml            # maps lib/ → the `pathview` package
+├── requirements.txt
+├── PARITY.md                 # feature matrix vs the R packages
+├── BUG_CHECKLIST.md          # 21 fixed bugs, each with a test id
+└── CHANGELOG.md
+```
+
+> **Note on `lib/`** — the directory is `lib/` but the importable package is
+> `pathview`, via `package-dir = { pathview = "lib" }` in `pyproject.toml`.
+> This is the layout the project has always used. You always
+> `import pathview`, never `import lib`.
+
+```
+
+---
+
+## 🔧 API reference
 
 ```python
 pathview(
-    pathway_id="04110",
-    gene_data=data,
-    limit={"gene": 2.0, "cpd": 1.5},      # ±2.0 for genes, ±1.5 for compounds
-    bins={"gene": 20, "cpd": 10},          # Color resolution
-    low={"gene": "blue", "cpd": "green"},
-    mid={"gene": "white", "cpd": "gray"},
-    high={"gene": "red", "cpd": "yellow"},
-)
+    pathway_id,                    # str or sequence of str
+    gene_data=None, cpd_data=None,
+    species="hsa",
+    gene_idtype="ENTREZ", cpd_idtype="KEGG",
+    kegg_dir=".", out_dir=None, out_suffix="pathview",
+    render_mode="auto",            # auto | native | vector | graph | svg
+    output_format="png",           # png | pdf | svg
+    theme="publication",           # publication | slate | dark
+    gene_color=None, cpd_color=None,   # ColorScale, palette name, or dict
+    limit=None, bins=10, both_dirs=True, discrete=False,
+    node_sum="sum", rand_seed=None,
+    split_group=False, expand_node=False,
+    map_symbol=True, map_cpd_name=True, map_null=True,
+    min_nnodes=3, quiet=False,
+) -> PathwayResult | PathwayResultSet
+
+sbgnview(
+    pathway_id,                    # collection id, local .sbgn path, or sequence
+    gene_data=None, cpd_data=None,
+    gene_idtype="ENTREZ", cpd_idtype="KEGG",
+    sbgn_dir=".", out_dir=None,
+    show_compartments=True, show_processes=True,
+    ...
+) -> PathwayResult | PathwayResultSet
 ```
 
-The scale maps:
-- `low value` → `low color` (default: green/blue)
-- `0` → `mid color` (default: gray)
-- `high value` → `high color` (default: red/yellow)
+Full reference: **[pathview-plus.readthedocs.io](https://pathview-plus.readthedocs.io)**
 
-### One-Directional Scale
+Selected functions:
 
 ```python
-both_dirs={"gene": False, "cpd": False}
-# Maps: 0 (mid) → max (high)
+# Species
+get_species_code("human")            # SpeciesInfo
+search_organisms("coli", limit=5)
+
+# Parsing
+parse_kgml(path); node_info(pw); pathway_edges(pw)
+parse_sbgn(path); sbgn_to_df(pw); sbgn_edges(pw); sbgn_compartments(pw)
+
+# SBGN collection
+list_sbgn_pathways(source=None, query=None)
+download_sbgn(pathway_id); sbgn_collection_info()
+download_panther / download_metacyc / download_smpdb / download_metacrop
+
+# Identifiers
+id2eg(ids, "SYMBOL", org="hsa"); eg2id(ids, "SYMBOL")
+cpd_id_map(ids, "CAS", "KEGG"); cpd_name_to_kegg(names)
+map_ids_to_sbgn(ids, "ENTREZ", "pathwayCommons"); id_route(a, b)
+
+# Expansion & data
+split_groups(node_df); expand_nodes(node_df)
+mol_sum(mol_data, id_map, sum_method="max_abs")
+demo_gene_data(2); demo_cpd_data(); sim_mol_data("cpd")
+
+# R interop
+read_rdata("cpd.names.rda")
 ```
 
 ---
 
-## 🗂️ Supported ID Types
+## ✅ Feature parity
 
-### Gene IDs
+**74 capabilities tracked: 73 full, 0 partial, 0 missing.**
+Covers **97.0%** of pathview (R) and **98.1%** of SBGNview (R); **11**
+capabilities are in neither.
 
-| Type | Value | Example |
-|------|-------|---------|
-| Entrez | `ENTREZ` | `1956` |
-| Symbol | `SYMBOL` | `EGFR` |
-| UniProt | `UNIPROT` | `P00533` |
-| Ensembl | `ENSEMBL` | `ENSG00000146648` |
-| KEGG | `KEGG` | `hsa:1956` |
+The matrix lives in [`lib/parity.py`](lib/parity.py) and
+`tests/test_parity.py` **fails the build if a feature claims support without a
+working implementation**. Full table: [PARITY.md](PARITY.md), or
+`pathview-plus parity --markdown`.
 
-### Compound IDs
+### The one thing marked not-applicable
 
-| Type | Value | Example |
-|------|-------|---------|
-| KEGG | `KEGG` | `C00031` |
-| PubChem | `PUBCHEM` | `5793` |
-| ChEBI | `CHEBI` | `4167` |
+**Bioconductor OrgDb annotation packages.** A Python package cannot import an R
+library. The *conversions* OrgDb provides are covered by `id2eg`/`eg2id` and by
+the bundled crosswalks — but if you already work in R, pathview's OrgDb
+integration is more convenient than either.
 
----
+### Caveats on features that do work
 
-## 🧬 Supported Databases
-
-### KEGG
-- **Format:** KGML (XML)
-- **Species:** 500+ organisms
-- **Download:** Automatic via KEGG REST API
-- **Example:** `pathway_id="hsa04110"`
-
-### Reactome
-- **Format:** SBGN-ML
-- **Species:** Human, mouse, rat, and more
-- **Download:** `download_reactome("R-HSA-109582")`
-- **Example:** Hemostasis, Immune System, Signaling
-
-### MetaCyc
-- **Format:** SBGN-ML
-- **Coverage:** 2,800+ metabolic pathways
-- **Download:** `download_metacyc("PWY-7210")`
-- **Example:** Pyrimidine biosynthesis
-
-### PANTHER
-- **Format:** SBGN-ML
-- **Coverage:** 177 signaling and metabolic pathways
-- **Note:** Manual download required
-
-### SMPDB
-- **Format:** SBGN-ML
-- **Coverage:** Small molecule pathways
-- **Note:** Manual download from website
+- **ENSEMBL has no offline route to SBGN glyph ids.** Two SBGNview crosswalk
+  files use an ALTREP variant the bundled reader does not decode. ENSEMBL still
+  converts through `id2eg` online.
+- **Offline Entrez → Pathway Commons is sparse**, routing via KO (21k pairs).
+  `gene_idtype="SYMBOL"` uses a direct 294k-pair route and maps far more
+  glyphs. **Prefer SYMBOL for offline SBGN work.**
+- **SBGN files are fetched, not bundled.** The index ships in the wheel; the
+  SBGN-ML is downloaded per pathway on first use, then cached.
+- **The collection is a subset** — 1,749 Reactome pathways, not all of them.
+  The live exporter covers the rest.
 
 ---
 
-## 🏗️ Architecture
+## 🧪 Development
 
-```
-pathview/
-├── __init__.py           # Public API exports
-├── constants.py          # Type definitions
-├── utils.py              # String/numeric utilities
-│
-├── id_mapping.py         # Gene/compound ID conversion
-├── mol_data.py           # Data aggregation, simulation
-│
-├── kegg_api.py           # KEGG REST API
-├── databases.py          # Reactome, MetaCyc downloaders
-│
-├── kgml_parser.py        # KEGG KGML (XML) parser
-├── sbgn_parser.py        # SBGN-ML (XML) parser
-│
-├── color_mapping.py      # Colormaps, node coloring
-├── node_mapping.py       # Map data onto nodes
-│
-├── rendering.py          # PNG/PDF renderers
-├── svg_rendering.py      # SVG vector renderer
-├── highlighting.py       # Post-hoc modifications
-├── splines.py            # Bezier curve math
-│
-└── pathview.py           # Core orchestrator
+```bash
+git clone https://github.com/raw-lab/pathview-plus
+cd pathview-plus
+pip install -e ".[dev,docs]"
 
-pathview_cli.py           # Command-line interface
-requirements.txt          # Dependencies
-README.md                 # This file
+pytest -q                          # 316 tests, all offline
+ruff check lib tests
+cd docs && sphinx-build -b html . _build/html
 ```
 
-**Module Statistics:**
-- **15 modules** | **3,506 lines of code**
-- Functional programming style
-- Full type hints
-- Comprehensive docstrings
+The suite makes **no network calls**. CI runs with `PATHVIEW_OFFLINE=1` across
+4 Python versions × 3 operating systems, so a regression that reintroduces a
+hidden request fails the build.
 
----
-
-## 🔧 API Reference
-
-### Core Function
-
-```python
-pathview(
-    pathway_id: str,
-    gene_data: Optional[pl.DataFrame] = None,
-    cpd_data: Optional[pl.DataFrame] = None,
-    species: str = "hsa",
-    kegg_dir: Path = ".",
-    kegg_native: bool = True,
-    output_format: str = "png",  # "png", "pdf", "svg"
-    gene_idtype: str = "ENTREZ",
-    cpd_idtype: str = "KEGG",
-    out_suffix: str = "pathview",
-    node_sum: str = "sum",
-    map_symbol: bool = True,
-    map_null: bool = True,
-    min_nnodes: int = 3,
-    new_signature: bool = True,
-    plot_col_key: bool = True,
-    # Color scale parameters
-    limit: dict = {"gene": 1.0, "cpd": 1.0},
-    bins: dict = {"gene": 10, "cpd": 10},
-    both_dirs: dict = {"gene": True, "cpd": True},
-    low: dict = {"gene": "green", "cpd": "blue"},
-    mid: dict = {"gene": "gray", "cpd": "gray"},
-    high: dict = {"gene": "red", "cpd": "yellow"},
-    na_col: str = "transparent",
-) -> dict
-```
-
-### Data Functions
-
-```python
-sim_mol_data(mol_type="gene", species="hsa", n_mol=100, n_exp=1) → pl.DataFrame
-mol_sum(mol_data, id_map, sum_method="sum") → pl.DataFrame
-```
-
-### ID Mapping
-
-```python
-id2eg(ids, category, org="Hs") → pl.DataFrame
-eg2id(eg_ids, category="SYMBOL", org="Hs") → pl.DataFrame
-cpd_id_map(in_ids, in_type, out_type="KEGG") → pl.DataFrame
-```
-
-### Parsing
-
-```python
-# KEGG
-parse_kgml(filepath) → KGMLPathway
-node_info(pathway) → pl.DataFrame
-
-# SBGN
-parse_sbgn(filepath) → SBGNPathway
-sbgn_to_df(pathway) → pl.DataFrame
-```
-
-### Database Downloads
-
-```python
-download_kegg(pathway_id, species="hsa", kegg_dir=".") → dict
-download_reactome(pathway_id, output_dir=".") → Path
-download_metacyc(pathway_id, output_dir=".") → Path
-list_reactome_pathways(species="Homo sapiens") → list[dict]
-detect_database(pathway_id) → str
-```
-
-### Highlighting
-
-```python
-# API design (full implementation in progress)
-result = pathview(...)
-highlighted = result + highlight_nodes(["1956", "2099"], color="red")
-highlighted.save("output.png")
-```
-
-### Splines
-
-```python
-cubic_bezier(p0, p1, p2, p3, n_points=50) → np.ndarray
-quadratic_bezier(p0, p1, p2, n_points=50) → np.ndarray
-catmull_rom_spline(points, n_points=50, alpha=0.5) → np.ndarray
-route_edge_spline(source, target, obstacles, mode="orthogonal") → np.ndarray
-bezier_to_svg_path(curve, close=False) → str
-```
-
----
-
-## 📈 Performance
-
-- **KEGG pathways:** ~2-5 seconds (download + render)
-- **SBGN pathways:** ~3-8 seconds (more complex)
-- **Multi-condition:** Linear scaling with # conditions
-- **Batch processing:** Parallel processing possible
-
-**Optimization tips:**
-- Cache downloaded files (automatic)
-- Use `output_format="svg"` for faster rendering
-- Disable color key for batch jobs: `plot_col_key=False`
+Every bug fixed in 3.x has a regression test that fails against the version
+that had it — see [BUG_CHECKLIST.md](BUG_CHECKLIST.md).
 
 ---
 
 ## 🤝 Contributing
 
-Contributions welcome! Areas for improvement:
+Contributions welcome. Areas that would help most:
 
-1. **SBGN rendering** — Improve glyph shape variety
-2. **Edge routing** — Implement A* pathfinding for splines
-3. **Database integration** — Add PANTHER, SMPDB auto-download
-4. **Highlighting** — Wire up image modification backend
-5. **Performance** — Parallel pathway processing
+1. **ENSEMBL crosswalks** — decode the remaining ALTREP variants in
+   `lib/rdata.py` so ENSEMBL reaches SBGN glyph ids offline
+2. **Edge routing** — A* pathfinding for splines around obstacles
+3. **SBGN glyph shapes** — a fuller SBGN-PD shape vocabulary
+4. **Layout** — automatic relayout for maps without coordinates
+5. **Performance** — parallel batch rendering
 
-We welcome contributions of other experts expanding features in Pathview-plus including the R and python versions. Please contact us via support. 
+See [CONTRIBUTING.md](CONTRIBUTING.md). Please open an issue before large
+changes. We welcome contributions from other experts expanding features in
+Pathview-plus, including the R and Python versions.
 
 ---
 
 ## 📄 License
 
-Creative Commons Attribution-NonCommercial (CC BY-NC 4.0) — See LICENSE file
+**Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)**
+— see [LICENSE](LICENSE).
+
+Bundled and retrieved third-party data carries its own terms, listed in the
+LICENSE file. In particular: KEGG is © Kanehisa Laboratories — academic use of
+the REST API is free, commercial use requires a licence.
+
+---
 
 ## 📚 Citing
 
-If you are publishing results obtained using Pathview-Plus, please cite: <br />
-- Pre-Print Pathview-Plus: Figueroa III JL, Brouwer CR, White III RA. 2026. Pathview-plus: unlocking the metabolic pathways from cells to ecosystems. bioRxiv.
+If you are publishing results obtained using Pathview-plus, please cite:
 
-If you using the R version please cite: <br />
-- Original Pathview R: Luo, W., & Brouwer, C. 2013. Pathview: an R/Bioconductor package for pathway-based data integration and visualization. Bioinformatics, 29(14), 1830–1831. [Pathview](https://doi.org/10.1093/bioinformatics/btt285)
-- Original SBGNview R: Shashikant, T., et al. 2022. SBGNview: Data analysis, integration and visualization on all pathways using SBGN. Bioinformatics, 38(11), 3006–3008. [SBGNview](https://doi.org/10.1093/bioinformatics/btab793) 
+- **Pathview-plus (pre-print):** Figueroa III JL, Brouwer CR, White III RA.
+  2026. *Pathview-plus: unlocking the metabolic pathways from cells to
+  ecosystems.* bioRxiv.
+
+If you use the R versions, please cite:
+
+- **Pathview (R):** Luo W, Brouwer C. 2013. *Pathview: an R/Bioconductor
+  package for pathway-based data integration and visualization.* Bioinformatics
+  29(14):1830–1831. [doi:10.1093/bioinformatics/btt285](https://doi.org/10.1093/bioinformatics/btt285)
+- **SBGNview (R):** Dong X, Vegesna K, Brouwer C, Luo W. 2022. *SBGNview: data
+  analysis, integration and visualization on all pathways.* Bioinformatics
+  38(5):1473–1476. [doi:10.1093/bioinformatics/btab793](https://doi.org/10.1093/bioinformatics/btab793)
+
+The pre-generated SBGN collection and identifier crosswalks are derived from
+the [SBGNview / SBGNhub](https://github.com/datapplab/SBGNhub) project.
 
 ---
 
 ## 📞 Support
 
-- **Issues:** [open an issue](https://github.com/raw-lab/pathview-plus/issues).  
+- **Issues:** [open an issue](https://github.com/raw-lab/pathview-plus/issues)
 - **Email:** [Dr. Richard Allen White III](mailto:rwhit101@uncc.edu)
+- **Lab:** [RAW Lab](https://github.com/raw-lab), UNC Charlotte
+
 ---
 
 **Made with ❤️ for the pathway visualization community**

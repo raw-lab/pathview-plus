@@ -1,0 +1,99 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pathview-plus"
+version = "3.1.0"
+description = "KEGG and SBGN pathway visualisation with multi-omics data overlay — a Python reimplementation of R pathview and SBGNview"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "CC-BY-NC-4.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Richard Allen White III", email = "rwhit101@uncc.edu" }]
+maintainers = [{ name = "RAW Lab, UNC Charlotte" }]
+keywords = [
+    "bioinformatics", "kegg", "sbgn", "pathway", "visualization",
+    "transcriptomics", "metabolomics", "proteomics", "multi-omics",
+    "rna-seq", "systems-biology", "pathview",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+
+dependencies = [
+    "polars>=1.0",
+    "numpy>=1.24",
+    "matplotlib>=3.7",
+    "networkx>=3.0",
+    "pillow>=10.0",
+    "requests>=2.28",
+]
+
+[project.optional-dependencies]
+layouts = ["scipy>=1.10"]   # kamada_kawai graph layout
+dev = ["pytest>=7.4", "pytest-cov>=4.1", "ruff>=0.5", "build>=1.0", "twine>=5.0"]
+docs = [
+    "sphinx>=7.2",
+    "furo>=2024.1.29",
+    "myst-parser>=2.0",
+    "linkify-it-py>=2.0",
+    "sphinx-copybutton>=0.5",
+    "sphinx-design>=0.5",
+    "sphinx-autodoc-typehints>=1.25",
+]
+all = ["pathview-plus[dev,docs,layouts]"]
+
+[project.urls]
+Homepage = "https://github.com/raw-lab/pathview-plus"
+Documentation = "https://pathview-plus.readthedocs.io"
+Repository = "https://github.com/raw-lab/pathview-plus"
+Issues = "https://github.com/raw-lab/pathview-plus/issues"
+Changelog = "https://github.com/raw-lab/pathview-plus/blob/main/CHANGELOG.md"
+
+[project.scripts]
+pathview-plus = "pathview.cli:main"
+pathview-cli = "pathview.cli:main"
+
+[tool.setuptools]
+# The source directory is lib/, installed as the `pathview` package — the
+# layout this project has always used.
+packages = ["pathview"]
+package-dir = { pathview = "lib" }
+include-package-data = true
+script-files = ["bin/pathview-cli.py"]
+
+[tool.setuptools.package-data]
+pathview = ["data/*.tsv.gz"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q --strict-markers"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 92
+src = ["lib"]
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "W"]
+# B905: zip() calls in this package pair sequences built from one
+# another (slice_bounds(box, len(fills)) with fills), so the lengths
+# are equal by construction and `strict=` adds noise without safety.
+ignore = ["E501", "B008", "B905"]
+
+[tool.coverage.run]
+source = ["pathview"]
+include = ["lib/*"]
+omit = ["*/tests/*"]

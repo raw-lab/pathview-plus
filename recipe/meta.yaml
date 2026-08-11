@@ -1,0 +1,62 @@
+{% set name = "pathview-plus" %}
+{% set version = "3.1.0" %}
+
+package:
+  name: {{ name|lower }}
+  version: {{ version }}
+
+source:
+  url: https://pypi.io/packages/source/{{ name[0] }}/{{ name }}/pathview_plus-{{ version }}.tar.gz
+  sha256: 0000000000000000000000000000000000000000000000000000000000000000
+
+build:
+  number: 0
+  noarch: python
+  script: {{ PYTHON }} -m pip install . -vv --no-deps --no-build-isolation
+  entry_points:
+    - pathview-plus = pathview.cli:main
+    - pathview-cli = pathview.cli:main
+
+requirements:
+  host:
+    - python >=3.10
+    - pip
+    - setuptools >=68
+  run:
+    - python >=3.10
+    - polars >=1.0
+    - numpy >=1.24
+    - matplotlib-base >=3.7
+    - networkx >=3.0
+    - pillow >=10.0
+    - requests >=2.28
+
+test:
+  imports:
+    - pathview
+  commands:
+    - pathview-plus --version
+    - pathview-plus info
+    - pathview-plus species human
+  requires:
+    - pytest
+
+about:
+  home: https://github.com/raw-lab/pathview-plus
+  license: CC-BY-NC-4.0
+  license_family: CC
+  license_file: LICENSE
+  summary: KEGG and SBGN pathway visualisation with multi-omics data overlay
+  description: |
+    A Python reimplementation of R pathview and SBGNview. Overlays RNA-seq,
+    proteomics and metabolomics data on KEGG and SBGN pathway diagrams with
+    independent colour scales for transcript and metabolite data. Bundles an
+    offline organism table covering 10,718 KEGG organisms, so species
+    resolution, compound naming and vector rendering work with no network
+    access.
+  doc_url: https://pathview-plus.readthedocs.io
+  dev_url: https://github.com/raw-lab/pathview-plus
+
+extra:
+  recipe-maintainers:
+    - raw-lab

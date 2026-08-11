@@ -1,305 +1,273 @@
 """
 svg_rendering.py
-Generate SVG (Scalable Vector Graphics) output for KEGG pathways.
+Standalone SVG output with edges, markers and an embedded colour key.
 
-This complements the existing PNG (pixel-based) and PDF (graph-based) modes
-with native vector graphics that are web-friendly, scalable, and editable.
+Fixes over v2.x
+---------------
+* Edges were never drawn.  ``render_edge_svg`` existed but ``keggview_svg``
+  never called it, so the SVG was a field of disconnected boxes.
+* ``render_edge_svg`` emitted a fresh ``<defs><marker id="marker_arrow">``
+  every call, producing hundreds of duplicate element ids in one document —
+  invalid SVG that renderers resolve unpredictably.  Markers are now defined
+  once, in the document header.
+* Node colours were looked up with ``cols.filter(pl.col("id") == node_id)``
+  *inside* a loop over nodes, and the filter ran twice per colour column:
+  O(nodes x columns) full scans.  Lookups are now a single dict build.
+* The canvas ignored node extents, clipping the rightmost and bottom nodes.
+* No colour key was emitted at all.
 
 Public API
 ----------
-  keggview_svg    : Render pathway as SVG with data overlay
-  render_node_svg : Generate SVG code for a single node
-  render_edge_svg : Generate SVG code for a single edge
-  
-SVG advantages over PNG:
-  - Scalable without quality loss
-  - Smaller file size for simple diagrams
-  - Editable in vector graphics software
-  - Web-native format (no conversion needed)
-  - Supports CSS styling and JavaScript interaction
+  keggview_svg    : write a complete SVG document
+  render_node_svg : SVG for a single node
+  render_edge_svg : SVG for a single edge
 """
 
 from __future__ import annotations
 
-import warnings
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Optional
-from xml.etree import ElementTree as ET
 
 import polars as pl
 
-from .color_mapping import draw_color_key, make_colormap
-from .utils import wordwrap
+from .color_mapping import ColorScale
+from .layout import Extent, NodeBox, fit_label, node_boxes, slice_bounds
+from .splines import offset_endpoints, points_to_bezier_path, route_edge_spline
+from .utils import contrast_text_color, escape_xml, is_transparent, to_hex
+from .vector_rendering import _DEFAULT_EDGE, EDGE_STYLE, THEMES
+
+_MARKERS = ("arrow", "bar", "circle", "diamond")
 
 
-# ---------------------------------------------------------------------------
-# SVG header and footer
-# ---------------------------------------------------------------------------
-
-def _svg_header(width: int, height: int, title: str = "") -> str:
-    """Generate SVG document header."""
-    return f'''<?xml version="1.0" encoding="UTF-8"?>
-<svg width="{width}" height="{height}" 
-     xmlns="http://www.w3.org/2000/svg" 
-     xmlns:xlink="http://www.w3.org/1999/xlink"
-     viewBox="0 0 {width} {height}">
-  <title>{title}</title>
-  <defs>
-    <style type="text/css">
-      .node {{ stroke: #333; stroke-width: 1; }}
-      .edge {{ stroke: #666; stroke-width: 1; fill: none; }}
-      .label {{ font-family: Arial, sans-serif; font-size: 11px; fill: #000; text-anchor: middle; }}
-    </style>
-  </defs>
-'''
-
-def _svg_footer() -> str:
-    """Generate SVG document footer."""
-    return "</svg>"
-
-
-# ---------------------------------------------------------------------------
-# Node rendering (rectangles and ellipses)
-# ---------------------------------------------------------------------------
-
-def render_node_svg(
-    node_id: str,
-    x: float,
-    y: float,
-    width: float,
-    height: float,
-    shape: str,
-    label: str,
-    fill_colors: list[str],
-    opacity: float = 1.0,
-) -> str:
-    """
-    Render a single node as SVG.
-    
-    Parameters
-    ----------
-    node_id:     Unique identifier for the node
-    x, y:        Center coordinates
-    width, height: Node dimensions
-    shape:       "rectangle", "ellipse", "roundedrectangle"
-    label:       Text to display on node
-    fill_colors: List of hex colors (one per data column/state)
-    opacity:     Fill opacity (0-1)
-    
-    Returns SVG code string for this node.
-    """
-    svg_parts = []
-    n_states = len(fill_colors)
-    
-    # Calculate bounding box
-    x1 = x - width / 2
-    y1 = y - height / 2
-    
-    if shape == "ellipse":
-        # Slice ellipse vertically for multi-state
-        rx, ry = width / 2, height / 2
-        for i, color in enumerate(fill_colors):
-            # Create clipped ellipse slices
-            clip_x = x1 + (i * width / n_states)
-            clip_width = width / n_states
-            svg_parts.append(
-                f'<g clip-path="url(#clip_{node_id}_{i})">'
-                f'  <ellipse cx="{x}" cy="{y}" rx="{rx}" ry="{ry}" '
-                f'    fill="{color}" opacity="{opacity}" class="node"/>'
-                f'</g>'
-            )
-            # Define clip path
-            svg_parts.insert(
-                0,
-                f'<clipPath id="clip_{node_id}_{i}">'
-                f'  <rect x="{clip_x}" y="{y1}" width="{clip_width}" height="{height}"/>'
-                f'</clipPath>'
-            )
-    else:
-        # Rectangle or rounded rectangle
-        rx_round = 5 if shape == "roundedrectangle" else 0
-        for i, color in enumerate(fill_colors):
-            slice_x = x1 + (i * width / n_states)
-            slice_width = width / n_states
-            svg_parts.append(
-                f'<rect x="{slice_x}" y="{y1}" width="{slice_width}" height="{height}" '
-                f'rx="{rx_round}" fill="{color}" opacity="{opacity}" class="node"/>'
-            )
-    
-    # Add label
-    wrapped = wordwrap(label, width=max(8, int(width / 8)))
-    lines = wrapped.split("\n")
-    y_text = y - (len(lines) - 1) * 5
-    for line in lines:
-        svg_parts.append(
-            f'<text x="{x}" y="{y_text}" class="label">{_escape_xml(line)}</text>'
+def _defs(theme: dict) -> str:
+    """Marker and filter definitions, emitted once per document."""
+    out = ["  <defs>"]
+    for name in _MARKERS:
+        shapes = {
+            "arrow": '<path d="M0,0 L10,5 L0,10 z"/>',
+            "bar": '<path d="M8,0 L10,0 L10,10 L8,10 z"/>',
+            "circle": '<circle cx="5" cy="5" r="4"/>',
+            "diamond": '<path d="M0,5 L5,0 L10,5 L5,10 z"/>',
+        }[name]
+        out.append(
+            f'    <marker id="pv-{name}" viewBox="0 0 10 10" refX="9" refY="5" '
+            f'markerWidth="5" markerHeight="5" orient="auto-start-reverse" '
+            f'markerUnits="strokeWidth">{shapes}</marker>'
         )
-        y_text += 12
-    
-    return "\n".join(svg_parts)
+    out.append(
+        '    <filter id="pv-halo" x="-20%" y="-20%" width="140%" height="140%">'
+        '<feDropShadow dx="0" dy="0.4" stdDeviation="0.5" '
+        'flood-color="#000" flood-opacity="0.18"/></filter>'
+    )
+    out.append("  </defs>")
+    return "\n".join(out)
 
 
-# ---------------------------------------------------------------------------
-# Edge rendering
-# ---------------------------------------------------------------------------
-
-def render_edge_svg(
-    source_x: float,
-    source_y: float,
-    target_x: float,
-    target_y: float,
-    edge_type: str = "arrow",
-    color: str = "#666",
-    width: float = 1.5,
-) -> str:
-    """
-    Render a single edge as SVG.
-    
-    Parameters
-    ----------
-    source_x, source_y: Start coordinates
-    target_x, target_y: End coordinates
-    edge_type:          "arrow", "inhibition", "dotted"
-    color:              Stroke color
-    width:              Line width
-    
-    Returns SVG code string for this edge.
-    """
-    marker_id = f"marker_{edge_type}"
-    path_style = f'stroke="{color}" stroke-width="{width}" fill="none" class="edge"'
-    
-    if edge_type == "dotted":
-        path_style += ' stroke-dasharray="3,3"'
-    
-    # Define arrow markers
-    markers = f'''
-    <defs>
-      <marker id="{marker_id}" viewBox="0 0 10 10" refX="8" refY="5"
-              markerWidth="6" markerHeight="6" orient="auto">
-        <path d="M 0 0 L 10 5 L 0 10 z" fill="{color}"/>
-      </marker>
-    </defs>
-    '''
-    
-    # Draw line
-    line = f'<line x1="{source_x}" y1="{source_y}" x2="{target_x}" y2="{target_y}" '\
-           f'{path_style} marker-end="url(#{marker_id})"/>'
-    
-    return markers + line
+def _header(extent: Extent, title: str, theme: dict) -> str:
+    w, h = extent.width, extent.height
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        f'<svg xmlns="http://www.w3.org/2000/svg" '
+        f'xmlns:xlink="http://www.w3.org/1999/xlink" '
+        f'width="{w:.0f}" height="{h:.0f}" '
+        f'viewBox="{extent.x0:.1f} {extent.y0:.1f} {w:.1f} {h:.1f}">\n'
+        f'  <title>{escape_xml(title)}</title>\n'
+        '  <style type="text/css"><![CDATA[\n'
+        '    .pv-node { stroke-width: 0.7; }\n'
+        f'    .pv-label {{ font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; '
+        f'text-anchor: middle; fill: {theme["text"]}; }}\n'
+        '    .pv-edge { fill: none; stroke-linecap: round; }\n'
+        '  ]]></style>\n'
+        f'  <rect x="{extent.x0:.1f}" y="{extent.y0:.1f}" width="{w:.1f}" '
+        f'height="{h:.1f}" fill="{theme["map_bg"]}"/>\n'
+        + _defs(theme) + "\n"
+    )
 
 
-# ---------------------------------------------------------------------------
-# Main SVG rendering function
-# ---------------------------------------------------------------------------
+def render_node_svg(box: NodeBox, fill_colors: Sequence[str], theme: dict,
+                    label_override: str | None = None) -> str:
+    """SVG fragment for one node, sliced by experiment."""
+    fills = [theme["unmapped"] if is_transparent(c) else to_hex(c, False)
+             for c in (fill_colors or [])] or [theme["unmapped"]]
+    bands = slice_bounds(box, len(fills))
+    nid = escape_xml(box.entry_id)
+    parts: list[str] = [f'  <g id="node-{nid}">']
+
+    if box.is_round:
+        cid = f"clip-{nid}"
+        parts.append(
+            f'    <clipPath id="{cid}"><circle cx="{box.x:.1f}" cy="{box.y:.1f}" '
+            f'r="{box.radius:.1f}"/></clipPath>'
+        )
+        parts.append(f'    <g clip-path="url(#{cid})">')
+        for (x0, x1), face in zip(bands, fills):
+            parts.append(
+                f'      <rect x="{x0:.1f}" y="{box.top:.1f}" '
+                f'width="{max(0.1, x1 - x0):.1f}" height="{box.height:.1f}" fill="{face}"/>'
+            )
+        parts.append("    </g>")
+        parts.append(
+            f'    <circle cx="{box.x:.1f}" cy="{box.y:.1f}" r="{box.radius:.1f}" '
+            f'fill="none" stroke="{theme["border"]}" class="pv-node"/>'
+        )
+    else:
+        r = box.corner_radius
+        for (x0, x1), face in zip(bands, fills):
+            rr = f' rx="{r:.1f}"' if len(fills) == 1 else ""
+            parts.append(
+                f'    <rect x="{x0:.1f}" y="{box.top:.1f}" '
+                f'width="{max(0.1, x1 - x0):.1f}" height="{box.height:.1f}"{rr} fill="{face}"/>'
+            )
+        parts.append(
+            f'    <rect x="{box.left:.1f}" y="{box.top:.1f}" width="{box.width:.1f}" '
+            f'height="{box.height:.1f}" rx="{r:.1f}" fill="none" '
+            f'stroke="{theme["border"]}" class="pv-node"/>'
+        )
+
+    label = label_override if label_override is not None else box.label
+    if label:
+        text = fit_label(box, label)
+        lines = text.split("\n")
+        if box.is_round:
+            size = 4.6
+            y = box.bottom + size + 0.8
+            fill = theme["text"]
+        else:
+            size = max(3.4, min(6.5, (box.width * 1.5) / max(1, max(len(t) for t in lines))))
+            y = box.y - (len(lines) - 1) * size * 0.55 + size * 0.35
+            fill = contrast_text_color(fills[len(fills) // 2], dark=theme["text"])
+        for line in lines:
+            parts.append(
+                f'    <text x="{box.x:.1f}" y="{y:.1f}" class="pv-label" '
+                f'font-size="{size:.1f}" fill="{fill}">{escape_xml(line)}</text>'
+            )
+            y += size * 1.1
+
+    parts.append("  </g>")
+    return "\n".join(parts)
+
+
+def render_edge_svg(src: NodeBox, tgt: NodeBox, subtype: str = "",
+                    edge_type: str = "", width: float = 0.9,
+                    opacity: float = 0.75) -> str:
+    """SVG fragment for one edge; markers come from the shared ``<defs>``."""
+    style = EDGE_STYLE.get((subtype or "").lower(),
+                           EDGE_STYLE.get((edge_type or "").lower(), _DEFAULT_EDGE))
+    s, t = offset_endpoints(
+        (src.x, src.y), (tgt.x, tgt.y),
+        src.radius if src.is_round else src.height / 2 + 1,
+        (tgt.radius + 3.0) if tgt.is_round else tgt.height / 2 + 3.0,
+    )
+    curve = route_edge_spline(s, t, routing_mode="curved", curvature=0.12, n_points=14)
+    path = points_to_bezier_path([tuple(p) for p in curve])
+    if not path:
+        return ""
+
+    dash = {"-": "", "--": ' stroke-dasharray="4,2.5"', ":": ' stroke-dasharray="1.5,2"'}
+    marker = ""
+    if style["head"] != "none":
+        marker = f' marker-end="url(#pv-{style["head"]})"'
+    return (
+        f'  <path d="{path}" class="pv-edge" stroke="{style["color"]}" '
+        f'stroke-width="{width:.2f}" opacity="{opacity:.2f}"'
+        f'{dash.get(style["style"], "")}{marker}/>'
+    )
+
+
+def _color_key_svg(scale: ColorScale, x: float, y: float,
+                   width: float, height: float, theme: dict) -> str:
+    """An inline colour key so the SVG is self-describing."""
+    colors = scale.colors()
+    n = len(colors)
+    lo, hi = scale.bounds()
+    parts = ['  <g class="pv-key">']
+    bw = width / n
+    for i, c in enumerate(colors):
+        parts.append(f'    <rect x="{x + i * bw:.1f}" y="{y:.1f}" width="{bw:.2f}" '
+                     f'height="{height:.1f}" fill="{c}"/>')
+    parts.append(f'    <rect x="{x:.1f}" y="{y:.1f}" width="{width:.1f}" '
+                 f'height="{height:.1f}" fill="none" stroke="{theme["border"]}" '
+                 f'stroke-width="0.6"/>')
+    for frac, val in ((0.0, lo), (0.5, (lo + hi) / 2), (1.0, hi)):
+        parts.append(
+            f'    <text x="{x + frac * width:.1f}" y="{y + height + 7:.1f}" '
+            f'class="pv-label" font-size="6">{val:g}</text>'
+        )
+    if scale.label:
+        parts.append(f'    <text x="{x + width / 2:.1f}" y="{y - 3:.1f}" '
+                     f'class="pv-label" font-size="7" '
+                     f'font-weight="600">{escape_xml(scale.label)}</text>')
+    parts.append("  </g>")
+    return "\n".join(parts)
+
 
 def keggview_svg(
-    plot_data_gene: Optional[pl.DataFrame],
-    cols_gene: Optional[pl.DataFrame],
-    plot_data_cpd: Optional[pl.DataFrame],
-    cols_cpd: Optional[pl.DataFrame],
     node_data: pl.DataFrame,
-    pathway_name: str,
-    kegg_dir: Path = Path("."),
+    edge_data: pl.DataFrame | None = None,
+    color_map: dict[str, list[str]] | None = None,
+    label_map: dict[str, str] | None = None,
+    pathway_name: str = "pathway",
+    title: str | None = None,
+    out_dir: str | Path = ".",
     out_suffix: str = "pathview",
+    gene_scale: ColorScale | None = None,
+    cpd_scale: ColorScale | None = None,
+    theme: str = "publication",
     new_signature: bool = True,
-    **kwargs,
-) -> None:
-    """
-    Render pathway as SVG with data overlay.
-    
-    This is an alternative to keggview_native (PNG) and keggview_graph (PDF).
-    Generates a standalone SVG file with nodes colored by expression data.
-    
-    Parameters
-    ----------
-    plot_data_gene:  Gene node positions + data
-    cols_gene:       Gene node color assignments
-    plot_data_cpd:   Compound node positions + data
-    cols_cpd:        Compound node color assignments
-    node_data:       All pathway nodes
-    pathway_name:    Pathway ID
-    kegg_dir:        Output directory
-    out_suffix:      Output filename suffix
-    new_signature:   Add "Rendered by pathview.py" watermark
-    """
-    # Determine canvas size from node positions
-    max_x = node_data["x"].max() or 1000
-    max_y = node_data["y"].max() or 800
-    canvas_width = int(max_x + 100)
-    canvas_height = int(max_y + 100)
-    
-    svg_code = [_svg_header(canvas_width, canvas_height, pathway_name)]
-    
-    # Render gene nodes
-    if plot_data_gene is not None and cols_gene is not None:
-        svg_code.append("<!-- Gene nodes -->")
-        color_cols = [c for c in cols_gene.columns if c.endswith("_col")]
-        for row in plot_data_gene.iter_rows(named=True):
-            node_id = row["entry_id"]
-            colors = [cols_gene.filter(pl.col("id") == node_id)[c].item() 
-                     for c in color_cols if not cols_gene.filter(pl.col("id") == node_id).is_empty()]
-            if not colors or all(c == "transparent" for c in colors):
-                colors = ["#CCCCCC"]
-            svg_code.append(
-                render_node_svg(
-                    node_id=node_id,
-                    x=row["x"],
-                    y=row["y"],
-                    width=row["width"],
-                    height=row["height"],
-                    shape=row.get("shape", "rectangle"),
-                    label=row.get("label", ""),
-                    fill_colors=colors,
-                )
-            )
-    
-    # Render compound nodes
-    if plot_data_cpd is not None and cols_cpd is not None:
-        svg_code.append("<!-- Compound nodes -->")
-        color_cols = [c for c in cols_cpd.columns if c.endswith("_col")]
-        for row in plot_data_cpd.iter_rows(named=True):
-            node_id = row["entry_id"]
-            colors = [cols_cpd.filter(pl.col("id") == node_id)[c].item() 
-                     for c in color_cols if not cols_cpd.filter(pl.col("id") == node_id).is_empty()]
-            if not colors or all(c == "transparent" for c in colors):
-                colors = ["#DDDDFF"]
-            svg_code.append(
-                render_node_svg(
-                    node_id=node_id,
-                    x=row["x"],
-                    y=row["y"],
-                    width=row["width"],
-                    height=row["height"],
-                    shape=row.get("shape", "ellipse"),
-                    label=row.get("label", ""),
-                    fill_colors=colors,
-                )
-            )
-    
-    # Add signature
+    plot_col_key: bool = True,
+    draw_edges: bool = True,
+    show_link_edges: bool = False,
+) -> Path:
+    """Write a complete, self-contained SVG document."""
+    th = THEMES.get(theme, THEMES["publication"])
+    color_map = color_map or {}
+    label_map = label_map or {}
+
+    boxes = [b for b in node_boxes(node_data) if not b.is_title]
+    by_id = {b.entry_id: b for b in boxes}
+
+    keys = [s for s in (gene_scale, cpd_scale) if s is not None] if plot_col_key else []
+    extent = Extent.from_boxes(boxes, pad=34.0)
+    if keys:
+        extent = Extent(extent.x0, extent.y0, extent.x1, extent.y1 + 46.0)
+
+    parts = [_header(extent, title or pathway_name, th)]
+
+    if draw_edges and edge_data is not None and not edge_data.is_empty():
+        parts.append("  <!-- edges -->")
+        for row in edge_data.iter_rows(named=True):
+            s, t = by_id.get(str(row["source"])), by_id.get(str(row["target"]))
+            if s is None or t is None:
+                continue
+            if (s.node_type == "map" or t.node_type == "map") and not show_link_edges:
+                continue
+            frag = render_edge_svg(s, t, row.get("subtype", ""), row.get("edge_type", ""))
+            if frag:
+                parts.append(frag)
+
+    parts.append("  <!-- nodes -->")
+    for box in sorted(boxes, key=lambda b: 0 if b.node_type == "map" else 1):
+        parts.append(render_node_svg(box, color_map.get(box.entry_id, []), th,
+                                     label_map.get(box.entry_id)))
+
+    if keys:
+        kw = min(240.0, extent.width * 0.32)
+        y = extent.y1 - 30.0
+        x = extent.x0 + extent.width * 0.10
+        for i, sc in enumerate(keys):
+            parts.append(_color_key_svg(sc, x + i * (kw + 40.0), y, kw, 8.0, th))
+
     if new_signature:
-        svg_code.append(
-            f'<text x="10" y="{canvas_height - 10}" '
-            f'style="font-size: 9px; fill: #666;">Rendered by pathview.py</text>'
+        parts.append(
+            f'  <text x="{extent.x1 - 6:.1f}" y="{extent.y1 - 5:.1f}" '
+            f'class="pv-label" text-anchor="end" font-size="6" '
+            f'fill="{th["muted"]}" font-style="italic">pathview-plus</text>'
         )
-    
-    svg_code.append(_svg_footer())
-    
-    # Write to file
-    out_path = Path(kegg_dir) / f"{pathway_name}.{out_suffix}.svg"
-    out_path.write_text("\n".join(svg_code), encoding="utf-8")
-    print(f"Info: Written → {out_path}")
 
+    parts.append("</svg>")
 
-# ---------------------------------------------------------------------------
-# Utilities
-# ---------------------------------------------------------------------------
-
-def _escape_xml(text: str) -> str:
-    """Escape XML special characters."""
-    return (text
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace('"', "&quot;")
-            .replace("'", "&apos;"))
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"{pathway_name}.{out_suffix}.svg"
+    out_path.write_text("\n".join(parts), encoding="utf-8")
+    return out_path

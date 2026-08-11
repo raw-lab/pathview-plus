@@ -1,0 +1,74 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the pre-print below."
+title: "Pathview-plus: pathway visualisation for KEGG and SBGN with multi-omics overlay"
+abstract: >-
+  A Python implementation of R pathview and SBGNview. Overlays transcript,
+  protein and metabolite data on KEGG and SBGN pathway diagrams with
+  independent colour scales per data class, and bundles offline reference data
+  for 10,718 organisms and 5,206 pre-generated SBGN pathways.
+type: software
+version: 3.1.0
+license: CC-BY-NC-4.0
+repository-code: "https://github.com/raw-lab/pathview-plus"
+url: "https://pathview-plus.readthedocs.io"
+keywords:
+  - bioinformatics
+  - pathway analysis
+  - KEGG
+  - SBGN
+  - multi-omics
+  - visualization
+authors:
+  - family-names: "Figueroa III"
+    given-names: "Jose L."
+  - family-names: "Brouwer"
+    given-names: "Cory R."
+  - family-names: "White III"
+    given-names: "Richard Allen"
+    email: rwhit101@uncc.edu
+    affiliation: "University of North Carolina at Charlotte"
+preferred-citation:
+  type: article
+  title: "Pathview-plus: unlocking the metabolic pathways from cells to ecosystems"
+  year: 2026
+  journal: bioRxiv
+  authors:
+    - family-names: "Figueroa III"
+      given-names: "Jose L."
+    - family-names: "Brouwer"
+      given-names: "Cory R."
+    - family-names: "White III"
+      given-names: "Richard Allen"
+references:
+  - type: article
+    title: "Pathview: an R/Bioconductor package for pathway-based data integration and visualization"
+    year: 2013
+    journal: Bioinformatics
+    volume: 29
+    issue: 14
+    start: 1830
+    end: 1831
+    doi: 10.1093/bioinformatics/btt285
+    authors:
+      - family-names: Luo
+        given-names: Weijun
+      - family-names: Brouwer
+        given-names: Cory
+  - type: article
+    title: "SBGNview: data analysis, integration and visualization on all pathways"
+    year: 2022
+    journal: Bioinformatics
+    volume: 38
+    issue: 5
+    start: 1473
+    end: 1476
+    doi: 10.1093/bioinformatics/btab793
+    authors:
+      - family-names: Dong
+        given-names: Xiaoxi
+      - family-names: Vegesna
+        given-names: Kannan
+      - family-names: Brouwer
+        given-names: Cory
+      - family-names: Luo
+        given-names: Weijun

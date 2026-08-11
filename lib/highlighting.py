@@ -1,375 +1,457 @@
 """
 highlighting.py
-Layer-by-layer pathway graph modifications.
+Composable post-hoc pathway modification.
 
-Implements a ggplot2-style composable interface for post-hoc pathway
-customization. Users can highlight specific nodes or paths, change colors,
-adjust labels, and more — all without re-running the full rendering pipeline.
+Fixes over v2.x
+---------------
+* ``pathview()`` returned a plain ``dict``, so the entire documented
+  ``result + highlight_nodes(...)`` API could never be used — ``dict`` has no
+  ``__add__``.  The orchestrator now returns a :class:`PathwayResult`.
+* ``image_array`` was never populated by anything, so every modifier hit its
+  ``if result.image_array is None: return`` guard and silently did nothing.
+  The result now carries the rendered raster.
+* ``_hex_to_rgb("red")`` raised ``ValueError: invalid literal for int() with
+  base 16: 're'`` — the function crashed on ``highlight_nodes``' own default
+  argument.  Colour parsing goes through :func:`utils.to_rgb`.
+* Highlights were drawn at ``img_height - y``, mirroring them vertically away
+  from the nodes they were meant to mark.
+* ``opacity`` was accepted and ignored; ``change_labels`` stored a dict and
+  never rendered anything.  Both now do what they say.
 
 Usage
 -----
-    from pathview import pathview, highlight_nodes, highlight_edges
-    
-    result = pathview("04110", gene_data=data, species="hsa")
-    
-    # Compose modifications with +
-    modified = (result
-                + highlight_nodes(["1956", "2099"], color="red", width=4)
-                + highlight_edges([("1956", "2099")], color="blue", width=3))
-    
-    # Save modified version
-    modified.save("highlighted.png")
-
-Public API
-----------
-  PathwayResult : Container for pathway rendering results
-  highlight_nodes : Highlight specific nodes
-  highlight_edges : Highlight specific edges
-  highlight_path  : Highlight an entire path
-  change_labels   : Update node labels
+    result = pathview("00020", gene_data=df, species="hsa")
+    (result
+     + highlight_nodes(["1431", "3417"], color="#7C3AED", width=3)
+     + highlight_path(["1431", "3417", "3418"], color="orange")
+     + change_labels({"1431": "CS *"})
+    ).save("annotated.png")
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Optional
 
 import numpy as np
 import polars as pl
-from PIL import Image
+
+from .layout import NodeBox, node_boxes
+from .utils import to_rgb
+
+Modifier = Callable[["PathwayResult"], None]
 
 
 # ---------------------------------------------------------------------------
-# PathwayResult container
+# Result container
 # ---------------------------------------------------------------------------
 
 @dataclass
 class PathwayResult:
     """
-    Container for pathway rendering results.
-    
-    Supports composable modifications via the + operator.
-    Stores both the rendered image and the underlying data so modifications
-    can be applied without full re-rendering.
+    Everything a pathview run produced, plus a composable modification API.
+
+    Also behaves like the v2.x return dict (``result["plot_data_gene"]``) so
+    existing scripts keep working.
     """
-    pathway_id: str
-    plot_data_gene: Optional[pl.DataFrame] = None
-    plot_data_cpd: Optional[pl.DataFrame] = None
-    output_path: Optional[Path] = None
-    image_array: Optional[np.ndarray] = None
-    modifications: list[Callable] = field(default_factory=list)
-    
-    def __add__(self, modifier: Callable) -> PathwayResult:
-        """
-        Apply a modification function and return a new PathwayResult.
-        
-        This implements ggplot2-style layer composition:
-        
-            result = pathview(...) + highlight_nodes(...) + highlight_edges(...)
-        """
-        new_result = PathwayResult(
-            pathway_id=self.pathway_id,
-            plot_data_gene=self.plot_data_gene,
-            plot_data_cpd=self.plot_data_cpd,
+
+    pathway_id: str = ""
+    pathway_name: str = ""
+    species: str = ""
+    plot_data_gene: pl.DataFrame | None = None
+    plot_data_cpd: pl.DataFrame | None = None
+    cols_gene: pl.DataFrame | None = None
+    cols_cpd: pl.DataFrame | None = None
+    node_data: pl.DataFrame | None = None
+    edge_data: pl.DataFrame | None = None
+    output_path: Path | None = None
+    frame: object = None          # RasterFrame: raster + KGML transform
+    gene_scale: object = None
+    cpd_scale: object = None
+    diagnostics: dict = field(default_factory=dict)
+    modifications: list[Modifier] = field(default_factory=list)
+    label_changes: dict[str, str] = field(default_factory=dict)
+
+    # -- dict compatibility ------------------------------------------------
+    def __getitem__(self, key: str):
+        return getattr(self, key)
+
+    def get(self, key: str, default=None):
+        return getattr(self, key, default)
+
+    def keys(self) -> list[str]:
+        return ["plot_data_gene", "plot_data_cpd", "node_data", "edge_data",
+                "output_path", "diagnostics"]
+
+    def __bool__(self) -> bool:
+        return self.node_data is not None and not self.node_data.is_empty()
+
+    # -- composition -------------------------------------------------------
+    def __add__(self, modifier: Modifier) -> PathwayResult:
+        if not callable(modifier):
+            raise TypeError(
+                f"Expected a modifier function, got {type(modifier).__name__}. "
+                "Use highlight_nodes(...) rather than highlight_nodes."
+            )
+        new = PathwayResult(
+            pathway_id=self.pathway_id, pathway_name=self.pathway_name,
+            species=self.species,
+            plot_data_gene=self.plot_data_gene, plot_data_cpd=self.plot_data_cpd,
+            cols_gene=self.cols_gene, cols_cpd=self.cols_cpd,
+            node_data=self.node_data, edge_data=self.edge_data,
             output_path=self.output_path,
-            image_array=self.image_array.copy() if self.image_array is not None else None,
+            frame=None if self.frame is None else self.frame.copy(),
+            gene_scale=self.gene_scale, cpd_scale=self.cpd_scale,
+            diagnostics=dict(self.diagnostics),
             modifications=self.modifications + [modifier],
+            label_changes=dict(self.label_changes),
         )
-        # Apply the modification
-        modifier(new_result)
-        return new_result
-    
-    def save(self, path: str | Path, format: str = "png") -> None:
-        """Save the modified pathway to a file."""
-        if self.image_array is None:
-            raise ValueError("No image data to save")
-        
-        img = Image.fromarray(self.image_array)
-        if format.lower() == "pdf":
-            img.save(path, "PDF", resolution=300.0)
+        modifier(new)
+        return new
+
+    @property
+    def image_array(self) -> np.ndarray | None:
+        """The rendered raster, or None when the mode produced only vectors."""
+        return None if self.frame is None else self.frame.array
+
+    @image_array.setter
+    def image_array(self, value) -> None:
+        from .layout import RasterFrame
+        self.frame = None if value is None else RasterFrame(value)
+
+    # -- output ------------------------------------------------------------
+    def save(self, path: str | Path, dpi: int = 200) -> Path:
+        """Write the (possibly modified) raster to *path*."""
+        from PIL import Image
+
+        if self.frame is None:
+            raise ValueError(
+                "No raster to save. Highlighting operates on a rendered "
+                "image; run pathview(..., render_mode='native') or "
+                "render_mode='vector' first."
+            )
+        out = Path(path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        img = Image.fromarray(self.frame.array.astype(np.uint8))
+        fmt = out.suffix.lstrip(".").upper() or "PNG"
+        if fmt == "PDF":
+            img.convert("RGB").save(out, "PDF", resolution=float(dpi))
         else:
-            img.save(path, format.upper())
-        print(f"Info: Saved modified pathway → {path}")
-    
-    def show(self) -> None:
-        """Display the pathway using PIL."""
-        if self.image_array is None:
-            raise ValueError("No image data to display")
-        Image.fromarray(self.image_array).show()
+            img.save(out, "JPEG" if fmt in ("JPG", "JPEG") else fmt)
+        return out
+
+    def summary(self) -> str:
+        d = self.diagnostics
+        parts = [f"{self.pathway_name or self.pathway_id}"]
+        if "gene" in d:
+            parts.append(f"genes: {d['gene']}")
+        if "cpd" in d:
+            parts.append(f"compounds: {d['cpd']}")
+        if self.output_path:
+            parts.append(f"-> {self.output_path.name}")
+        return " | ".join(parts)
+
+    def _boxes(self) -> list[NodeBox]:
+        return node_boxes(self.node_data) if self.node_data is not None else []
+
+
+class PathwayResultSet:
+    """
+    The results of rendering several pathways in one call.
+
+    Behaves like an ordered mapping of pathway id to
+    :class:`PathwayResult`, iterates over the results, and broadcasts ``+``
+    to every member so a highlight can be applied across a whole batch.
+
+    Failures are kept rather than raised: one unavailable pathway in a batch
+    of twenty should not discard the nineteen that worked.  ``failures``
+    records what went wrong, and the set is falsy only when nothing succeeded.
+    """
+
+    def __init__(self, results: dict[str, PathwayResult] | None = None,
+                 failures: dict[str, str] | None = None):
+        self._results: dict[str, PathwayResult] = dict(results or {})
+        self.failures: dict[str, str] = dict(failures or {})
+
+    # -- container protocol ------------------------------------------------
+    def __len__(self) -> int:
+        return len(self._results)
+
+    def __iter__(self):
+        return iter(self._results.values())
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return list(self._results.values())[key]
+        return self._results[key]
+
+    def __contains__(self, key) -> bool:
+        return key in self._results
+
+    def __bool__(self) -> bool:
+        return bool(self._results)
+
+    def __repr__(self) -> str:
+        return (f"PathwayResultSet({len(self._results)} rendered, "
+                f"{len(self.failures)} failed)")
+
+    def keys(self):
+        return self._results.keys()
+
+    def values(self):
+        return self._results.values()
+
+    def items(self):
+        return self._results.items()
+
+    def get(self, key, default=None):
+        return self._results.get(key, default)
+
+    # -- convenience -------------------------------------------------------
+    @property
+    def output_paths(self) -> list[Path]:
+        return [r.output_path for r in self._results.values() if r.output_path]
+
+    def __add__(self, modifier: Modifier) -> PathwayResultSet:
+        """Apply a modifier to every result, returning a new set."""
+        return PathwayResultSet(
+            {k: (v + modifier) for k, v in self._results.items()},
+            self.failures,
+        )
+
+    def summary(self) -> str:
+        lines = [r.summary() for r in self._results.values()]
+        lines += [f"{k}: FAILED — {v}" for k, v in self.failures.items()]
+        head = f"{len(self._results)} pathway(s) rendered"
+        if self.failures:
+            head += f", {len(self.failures)} failed"
+        return "\n".join([head, *lines])
+
+    def to_frame(self):
+        """One row per pathway: id, name, output path, status."""
+        import polars as pl
+
+        rows = [{"pathway": k, "name": r.pathway_name,
+                 "output": str(r.output_path) if r.output_path else "",
+                 "status": "ok"} for k, r in self._results.items()]
+        rows += [{"pathway": k, "name": "", "output": "", "status": v}
+                 for k, v in self.failures.items()]
+        return pl.DataFrame(rows) if rows else pl.DataFrame(
+            schema={"pathway": pl.String, "name": pl.String,
+                    "output": pl.String, "status": pl.String})
 
 
 # ---------------------------------------------------------------------------
-# Node highlighting
+# Node resolution
 # ---------------------------------------------------------------------------
 
-def highlight_nodes(
-    node_ids: list[str],
-    color: str = "red",
-    width: int = 4,
-    opacity: float = 1.0,
-) -> Callable[[PathwayResult], None]:
+def _resolve(result: PathwayResult, ids: Sequence[str]) -> list[NodeBox]:
     """
-    Highlight specified nodes by changing their border.
-    
-    Parameters
-    ----------
-    node_ids: List of node IDs to highlight (Entrez IDs or KEGG IDs)
-    color:    Border color (hex or named color)
-    width:    Border width in pixels
-    opacity:  Border opacity (0-1)
-    
-    Returns a modifier function that can be added to a PathwayResult.
-    
-    Example
-    -------
-    >>> result = pathview("04110", gene_data=data)
-    >>> highlighted = result + highlight_nodes(["1956", "2099"], color="red", width=4)
-    >>> highlighted.save("highlighted.png")
+    Find node boxes for *ids*, which may be entry ids or biological ids.
+
+    Accepting both matters: users think in Entrez/KEGG accessions, while the
+    layout is keyed on KGML entry ids.
     """
+    wanted = {str(i) for i in ids}
+    boxes = result._boxes()
+    by_entry = {b.entry_id: b for b in boxes}
+
+    hits: list[NodeBox] = [by_entry[i] for i in wanted if i in by_entry]
+
+    nd = result.node_data
+    if nd is not None and "kegg_names" in nd.columns:
+        for row in nd.iter_rows(named=True):
+            names = row.get("kegg_names") or []
+            if any(str(n) in wanted for n in names):
+                b = by_entry.get(str(row["entry_id"]))
+                if b is not None and b not in hits:
+                    hits.append(b)
+    return hits
+
+
+# ---------------------------------------------------------------------------
+# Drawing primitives (top-left origin throughout — no flipping)
+# ---------------------------------------------------------------------------
+
+def _blend(img: np.ndarray, ys: slice, xs: slice,
+           rgb: tuple[int, int, int], opacity: float) -> None:
+    region = img[ys, xs, :3]
+    if region.size == 0:
+        return
+    a = float(np.clip(opacity, 0.0, 1.0))
+    if a >= 1.0:
+        region[:] = rgb
+    else:
+        region[:] = np.clip(region.astype(np.float32) * (1 - a)
+                            + np.asarray(rgb, np.float32) * a, 0, 255).astype(np.uint8)
+    img[ys, xs, :3] = region
+
+
+def _draw_border(frame, box: NodeBox, rgb: tuple[int, int, int],
+                 thickness: int, opacity: float) -> None:
+    """
+    Outline a node.
+
+    Coordinates go through the frame's transform: KGML y already points down,
+    so there is no flip, but the raster may be offset and scaled relative to
+    KGML space and the highlight must follow.
+    """
+    img = frame.array
+    h, w = img.shape[:2]
+    t = max(1, int(round(thickness * max(1.0, frame.scale))))
+    px0, py0 = frame.to_pixels(box.left, box.top)
+    px1, py1 = frame.to_pixels(box.right, box.bottom)
+    x0, x1 = int(round(px0)) - t, int(round(px1)) + t
+    y0, y1 = int(round(py0)) - t, int(round(py1)) + t
+    x0c, x1c = max(0, x0), min(w, x1)
+    y0c, y1c = max(0, y0), min(h, y1)
+    if x1c <= x0c or y1c <= y0c:
+        return
+    _blend(img, slice(y0c, min(h, y0c + t)), slice(x0c, x1c), rgb, opacity)
+    _blend(img, slice(max(0, y1c - t), y1c), slice(x0c, x1c), rgb, opacity)
+    _blend(img, slice(y0c, y1c), slice(x0c, min(w, x0c + t)), rgb, opacity)
+    _blend(img, slice(y0c, y1c), slice(max(0, x1c - t), x1c), rgb, opacity)
+
+
+def _draw_line(frame, p0: tuple[float, float], p1: tuple[float, float],
+               rgb: tuple[int, int, int], thickness: int, opacity: float) -> None:
+    """Draw a thick line by sampling along the segment (no coordinate flip)."""
+    img = frame.array
+    h, w = img.shape[:2]
+    x0, y0 = frame.to_pixels(*p0)
+    x1, y1 = frame.to_pixels(*p1)
+    thickness = max(1, int(round(thickness * max(1.0, frame.scale))))
+    steps = int(max(abs(x1 - x0), abs(y1 - y0))) + 1
+    t = max(1, int(thickness)) // 2
+    for xf, yf in zip(np.linspace(x0, x1, steps), np.linspace(y0, y1, steps)):
+        px, py = int(round(xf)), int(round(yf))
+        _blend(img, slice(max(0, py - t), min(h, py + t + 1)),
+               slice(max(0, px - t), min(w, px + t + 1)), rgb, opacity)
+
+
+# ---------------------------------------------------------------------------
+# Modifiers
+# ---------------------------------------------------------------------------
+
+def highlight_nodes(node_ids: Sequence[str], color: str = "red", width: int = 3,
+                    opacity: float = 1.0) -> Modifier:
+    """Outline the given nodes.  Accepts named colours, hex, or RGB tuples."""
+    rgb = to_rgb(color, default=(220, 38, 38))
+
     def modifier(result: PathwayResult) -> None:
-        if result.image_array is None:
+        if result.frame is None:
             return
-        
-        # Find node positions
-        nodes_to_highlight = []
-        if result.plot_data_gene is not None:
-            genes = result.plot_data_gene.filter(
-                pl.col("kegg_names").is_in(node_ids)
-            )
-            if not genes.is_empty():
-                nodes_to_highlight.append(genes)
-        
-        if result.plot_data_cpd is not None:
-            cpds = result.plot_data_cpd.filter(
-                pl.col("kegg_names").is_in(node_ids)
-            )
-            if not cpds.is_empty():
-                nodes_to_highlight.append(cpds)
-        
-        # Draw highlights
-        img_height = result.image_array.shape[0]
-        rgb = _hex_to_rgb(color)
-        
-        for df in nodes_to_highlight:
-            for row in df.iter_rows(named=True):
-                cx, cy = row["x"], row["y"]
-                hw, hh = row["width"] / 2, row["height"] / 2
-                _draw_border(
-                    result.image_array, 
-                    cx=cx, cy=cy, 
-                    half_width=hw, half_height=hh,
-                    img_height=img_height,
-                    rgb=rgb, thickness=width, opacity=opacity
-                )
-    
+        for box in _resolve(result, node_ids):
+            _draw_border(result.frame, box, rgb, width, opacity)
+
     return modifier
 
 
-# ---------------------------------------------------------------------------
-# Edge highlighting
-# ---------------------------------------------------------------------------
+def highlight_edges(edge_pairs: Sequence[tuple[str, str]], color: str = "blue",
+                    width: int = 3, opacity: float = 1.0) -> Modifier:
+    """Draw a line between each pair of nodes."""
+    rgb = to_rgb(color, default=(37, 99, 235))
 
-def highlight_edges(
-    edge_pairs: list[tuple[str, str]],
-    color: str = "blue",
-    width: int = 3,
-) -> Callable[[PathwayResult], None]:
-    """
-    Highlight specified edges (connections between nodes).
-    
-    Parameters
-    ----------
-    edge_pairs: List of (source_id, target_id) tuples
-    color:      Edge color
-    width:      Edge width in pixels
-    
-    Returns a modifier function.
-    
-    Example
-    -------
-    >>> result + highlight_edges([("1956", "2099"), ("2099", "5594")])
-    """
     def modifier(result: PathwayResult) -> None:
-        if result.image_array is None:
+        if result.frame is None:
             return
-        
-        # Find node positions for edge endpoints
-        gene_pos = {}
-        if result.plot_data_gene is not None:
-            for row in result.plot_data_gene.iter_rows(named=True):
-                gene_pos[row["kegg_names"]] = (row["x"], row["y"])
-        
-        img_height = result.image_array.shape[0]
-        rgb = _hex_to_rgb(color)
-        
-        # Draw lines between pairs
-        for source_id, target_id in edge_pairs:
-            if source_id in gene_pos and target_id in gene_pos:
-                x1, y1 = gene_pos[source_id]
-                x2, y2 = gene_pos[target_id]
-                _draw_line(
-                    result.image_array,
-                    x1=x1, y1=y1, x2=x2, y2=y2,
-                    img_height=img_height,
-                    rgb=rgb, thickness=width
-                )
-    
+        for src, tgt in edge_pairs:
+            s = _resolve(result, [src])
+            t = _resolve(result, [tgt])
+            if not s or not t:
+                continue
+            _draw_line(result.frame, (s[0].x, s[0].y), (t[0].x, t[0].y),
+                       rgb, width, opacity)
+
     return modifier
 
 
-# ---------------------------------------------------------------------------
-# Path highlighting
-# ---------------------------------------------------------------------------
+def highlight_path(path_node_ids: Sequence[str], color: str = "orange",
+                   node_width: int = 3, edge_width: int = 3,
+                   opacity: float = 1.0) -> Modifier:
+    """Outline an ordered chain of nodes and connect them."""
+    pairs = list(zip(path_node_ids[:-1], path_node_ids[1:]))
 
-def highlight_path(
-    path_node_ids: list[str],
-    color: str = "orange",
-    node_width: int = 3,
-    edge_width: int = 2,
-) -> Callable[[PathwayResult], None]:
-    """
-    Highlight an entire path (nodes and edges).
-    
-    Parameters
-    ----------
-    path_node_ids: Ordered list of node IDs forming a path
-    color:         Color for both nodes and edges
-    node_width:    Border width for nodes
-    edge_width:    Width for connecting edges
-    
-    Returns a modifier function.
-    
-    Example
-    -------
-    >>> result + highlight_path(["1956", "2099", "5594", "207"], color="orange")
-    """
-    # Build edge pairs from consecutive nodes
-    edge_pairs = list(zip(path_node_ids[:-1], path_node_ids[1:]))
-    
     def modifier(result: PathwayResult) -> None:
-        # Apply both node and edge highlighting
-        highlight_nodes(path_node_ids, color=color, width=node_width)(result)
-        highlight_edges(edge_pairs, color=color, width=edge_width)(result)
-    
+        highlight_edges(pairs, color=color, width=edge_width, opacity=opacity)(result)
+        highlight_nodes(path_node_ids, color=color, width=node_width,
+                        opacity=opacity)(result)
+
     return modifier
 
 
-# ---------------------------------------------------------------------------
-# Label modification
-# ---------------------------------------------------------------------------
+def change_labels(label_map: dict[str, str], font_size: int = 9,
+                  color: str = "#111111") -> Modifier:
+    """
+    Replace node labels on the rendered image.
 
-def change_labels(
-    label_map: dict[str, str],
-    font_size: int = 11,
-    color: str = "black",
-) -> Callable[[PathwayResult], None]:
+    v2.x stored the mapping on an undeclared attribute and never drew
+    anything.  This actually repaints the node and writes the new text.
     """
-    Change labels for specified nodes.
-    
-    Parameters
-    ----------
-    label_map:  Dict mapping node_id → new_label
-    font_size:  Font size for new labels
-    color:      Text color
-    
-    Returns a modifier function.
-    
-    Example
-    -------
-    >>> result + change_labels({"1956": "EGFR*", "2099": "ESR1*"})
-    """
+    rgb = to_rgb(color, default=(17, 17, 17))
+
     def modifier(result: PathwayResult) -> None:
-        # This would require text rendering on the image
-        # For now, store the label changes for future re-rendering
-        if not hasattr(result, '_label_changes'):
-            result._label_changes = {}
-        result._label_changes.update(label_map)
-    
+        result.label_changes.update({str(k): str(v) for k, v in label_map.items()})
+        if result.frame is None:
+            return
+        frame = result.frame
+        try:
+            from PIL import Image, ImageDraw, ImageFont
+        except ImportError:                                   # pragma: no cover
+            return
+
+        img = Image.fromarray(frame.array.astype(np.uint8))
+        draw = ImageDraw.Draw(img)
+        size = max(6, int(round(font_size * max(1.0, frame.scale))))
+        try:
+            font = ImageFont.truetype(
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", size)
+        except OSError:
+            font = ImageFont.load_default()
+
+        for key, text in label_map.items():
+            for box in _resolve(result, [key]):
+                left, top = frame.to_pixels(box.left, box.top)
+                right, bottom = frame.to_pixels(box.right, box.bottom)
+                cx, cy = frame.to_pixels(box.x, box.y)
+                draw.rectangle([left + 1, top + 1, right - 1, bottom - 1],
+                               fill=(255, 255, 255))
+                draw.rectangle([left, top, right, bottom],
+                               outline=(70, 70, 70), width=1)
+                try:
+                    bb = draw.textbbox((0, 0), text, font=font)
+                    tw, th_ = bb[2] - bb[0], bb[3] - bb[1]
+                except Exception:                             # pragma: no cover
+                    tw, th_ = len(text) * size * 0.55, size
+                draw.text((cx - tw / 2, cy - th_ / 2), text,
+                          fill=tuple(rgb), font=font)
+
+        frame.array = np.array(img, dtype=np.uint8)
+
     return modifier
 
 
-# ---------------------------------------------------------------------------
-# Drawing primitives
-# ---------------------------------------------------------------------------
+def annotate(text: str, xy: tuple[float, float], color: str = "#111111",
+             font_size: int = 11) -> Modifier:
+    """Write free text at a pathway coordinate."""
+    rgb = to_rgb(color, default=(17, 17, 17))
 
-def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
-    """Convert hex color to RGB tuple."""
-    hex_color = hex_color.lstrip("#")
-    return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+    def modifier(result: PathwayResult) -> None:
+        if result.frame is None:
+            return
+        from PIL import Image, ImageDraw, ImageFont
 
+        frame = result.frame
+        img = Image.fromarray(frame.array.astype(np.uint8))
+        draw = ImageDraw.Draw(img)
+        size = max(6, int(round(font_size * max(1.0, frame.scale))))
+        try:
+            font = ImageFont.truetype(
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", size)
+        except OSError:
+            font = ImageFont.load_default()
+        draw.text(frame.to_pixels(*xy), text, fill=tuple(rgb), font=font)
+        frame.array = np.array(img, dtype=np.uint8)
 
-def _draw_border(
-    img: np.ndarray,
-    cx: float,
-    cy: float,
-    half_width: float,
-    half_height: float,
-    img_height: int,
-    rgb: tuple[int, int, int],
-    thickness: int,
-    opacity: float,
-) -> None:
-    """Draw a rectangle border on the image array."""
-    # Convert KGML coordinates to image coordinates
-    py = int(img_height - cy)
-    px = int(cx)
-    hw, hh = int(half_width), int(half_height)
-    
-    # Draw rectangle border (4 sides)
-    for t in range(thickness):
-        # Top
-        img[max(0, py - hh - t):min(img.shape[0], py - hh - t + 1),
-            max(0, px - hw):min(img.shape[1], px + hw)] = rgb
-        # Bottom
-        img[max(0, py + hh + t):min(img.shape[0], py + hh + t + 1),
-            max(0, px - hw):min(img.shape[1], px + hw)] = rgb
-        # Left
-        img[max(0, py - hh):min(img.shape[0], py + hh),
-            max(0, px - hw - t):min(img.shape[1], px - hw - t + 1)] = rgb
-        # Right
-        img[max(0, py - hh):min(img.shape[0], py + hh),
-            max(0, px + hw + t):min(img.shape[1], px + hw + t + 1)] = rgb
-
-
-def _draw_line(
-    img: np.ndarray,
-    x1: float,
-    y1: float,
-    x2: float,
-    y2: float,
-    img_height: int,
-    rgb: tuple[int, int, int],
-    thickness: int,
-) -> None:
-    """Draw a line on the image array using Bresenham's algorithm."""
-    # Convert coordinates
-    px1, py1 = int(x1), int(img_height - y1)
-    px2, py2 = int(x2), int(img_height - y2)
-    
-    # Bresenham's line algorithm
-    dx = abs(px2 - px1)
-    dy = abs(py2 - py1)
-    sx = 1 if px1 < px2 else -1
-    sy = 1 if py1 < py2 else -1
-    err = dx - dy
-    
-    while True:
-        # Draw thick point
-        for t in range(-thickness // 2, thickness // 2 + 1):
-            for u in range(-thickness // 2, thickness // 2 + 1):
-                py = py1 + t
-                px = px1 + u
-                if 0 <= py < img.shape[0] and 0 <= px < img.shape[1]:
-                    img[py, px] = rgb
-        
-        if px1 == px2 and py1 == py2:
-            break
-        
-        e2 = 2 * err
-        if e2 > -dy:
-            err -= dy
-            px1 += sx
-        if e2 < dx:
-            err += dx
-            py1 += sy
+    return modifier

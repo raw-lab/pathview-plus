@@ -1,409 +1,271 @@
 """
 rendering.py
-Pathway diagram rendering:
-  - keggview_native : overlay data on a KEGG background PNG (pixel painting)
-  - keggview_graph  : draw a NetworkX graph diagram styled with Seaborn
-  - kegg_legend     : display a standalone KEGG diagram element legend
+Native rendering: overlay data on the KEGG background PNG.
+
+Fixes over v2.x
+---------------
+* Compound nodes were painted at the vertically mirrored position (a single
+  y-flip in ``_paint_cpd_nodes`` where the gene painter flipped twice and
+  cancelled out).  All geometry now comes from :mod:`layout`.
+* Compound radius used the full node width, drawing every metabolite at twice
+  its real size.
+* Circles were rasterised with a hard boolean mask over a full-image meshgrid:
+  aliased edges, and an O(image area) allocation *per compound node*.  Painting
+  is now supersampled within the node's own bounding box only — smooth edges
+  and orders of magnitude less work.
+* The colour key was drawn with ``plt.colorbar(ax=ax_img)``, which steals space
+  from the image axes; and it sampled a 256-step continuous ramp while nodes
+  used 10 discrete bins, so the key did not describe the figure.  Keys are now
+  drawn in their own axes from the same bins as the nodes, one per data class.
+* The signature was placed in data coordinates with the ``transform`` argument
+  commented out, so it landed in the top-left corner of the image.
+
+Public API
+----------
+  keggview_native : overlay onto the KEGG PNG and save
+  paint_nodes     : paint node colours into an RGB array
 """
 
 from __future__ import annotations
 
-import warnings
 from pathlib import Path
-from typing import Optional
 
-import matplotlib.patches as mpatches
-import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
-import seaborn as sns
-from PIL import Image
 
-from .color_mapping import draw_color_key, make_colormap
-from .utils import wordwrap
+from .color_mapping import ColorScale, draw_dual_key
+from .errors import RenderError
+from .layout import NodeBox, node_boxes, slice_bounds
+from .utils import is_transparent, to_rgb
 
-
-# ---------------------------------------------------------------------------
-# KEGG edge subtype reference table
-# ---------------------------------------------------------------------------
-
-_EDGE_SUBTYPES = [
-    # (name,              colour,    label, style,  arrowhead)
-    ("activation",        "#00CC00", "-->",  "solid",  "normal"),
-    ("inhibition",        "#CC0000", "--|",  "solid",  "tee"),
-    ("expression",        "#00AA00", "-->",  "dashed", "normal"),
-    ("repression",        "#AA0000", "--|",  "dashed", "tee"),
-    ("indirect",          "#888888", "..>",  "dotted", "normal"),
-    ("binding",           "#0000CC", "---",  "solid",  "none"),
-    ("compound",          "#8800AA", "---",  "solid",  "none"),
-    ("phosphorylation",   "#FF6600", "+p",   "solid",  "normal"),
-    ("dephosphorylation", "#FF6600", "-p",   "solid",  "normal"),
-    ("ubiquitination",    "#FF00FF", "+u",   "solid",  "normal"),
-    ("methylation",       "#00AAFF", "+m",   "solid",  "normal"),
-    ("others/unknown",    "#888888", "?",    "solid",  "normal"),
-]
+_SUPERSAMPLE = 4
 
 
 # ---------------------------------------------------------------------------
-# Shared helpers
+# Painting primitives
 # ---------------------------------------------------------------------------
 
-def _hex_to_rgb255(hex_col: str) -> Optional[np.ndarray]:
-    """
-    Convert a hex colour string to a uint8 [R, G, B] array.
-    Returns None for transparent / empty strings.
-    """
-    hex_col = hex_col.lstrip("#")
-    if not hex_col or hex_col.lower() in ("transparent", "none"):
-        return None
-    return np.array([int(hex_col[i:i+2], 16) for i in (0, 2, 4)], dtype=np.uint8)
+def _color_columns(df: pl.DataFrame | None) -> list[str]:
+    return [c for c in df.columns if c.endswith("_col")] if df is not None else []
 
 
-def _color_cols(df: pl.DataFrame) -> list[str]:
-    """Return column names that end with '_col'."""
-    return [c for c in df.columns if c.endswith("_col")]
+def _color_lookup(col_data: pl.DataFrame | None) -> dict[str, dict]:
+    if col_data is None or col_data.is_empty():
+        return {}
+    key = "id" if "id" in col_data.columns else col_data.columns[0]
+    return {str(row[key]): row for row in col_data.iter_rows(named=True)}
 
 
-# ---------------------------------------------------------------------------
-# Native view  (overlay on KEGG PNG)
-# ---------------------------------------------------------------------------
-
-def _paint_gene_nodes(
+def _paint_rect(
     img: np.ndarray,
-    plot_data: pl.DataFrame,
-    col_data: pl.DataFrame,
+    x0: float, x1: float, y0: float, y1: float,
+    rgb: np.ndarray,
+    preserve_dark: bool = True,
+    dark_threshold: int = 160,
+) -> None:
+    """
+    Fill an axis-aligned band, leaving dark pixels (text, borders) intact.
+
+    KEGG glyph outlines and gene symbols are near-black; painting over them
+    erases the labels the figure depends on.
+    """
+    h, w = img.shape[:2]
+    px0, px1 = max(0, int(round(x0))), min(w, int(round(x1)))
+    py0, py1 = max(0, int(round(y0))), min(h, int(round(y1)))
+    if px1 <= px0 or py1 <= py0:
+        return
+
+    region = img[py0:py1, px0:px1, :3]
+    if preserve_dark:
+        mask = region.max(axis=2) > dark_threshold
+        region[mask] = rgb
+    else:
+        region[:] = rgb
+    img[py0:py1, px0:px1, :3] = region
+
+
+def _circle_coverage(box: NodeBox, x0: float, x1: float) -> tuple[np.ndarray, tuple[int, int, int, int]]:
+    """
+    Anti-aliased coverage for the slice of a circle between x0 and x1.
+
+    Supersampled inside the node's bounding box only, rather than allocating a
+    full-image meshgrid per node as v2.x did.
+    """
+    px0, py0 = int(np.floor(box.left)), int(np.floor(box.top))
+    px1, py1 = int(np.ceil(box.right)), int(np.ceil(box.bottom))
+    nw, nh = max(1, px1 - px0), max(1, py1 - py0)
+    s = _SUPERSAMPLE
+
+    xs = px0 + (np.arange(nw * s) + 0.5) / s
+    ys = py0 + (np.arange(nh * s) + 0.5) / s
+    gx, gy = np.meshgrid(xs, ys)
+
+    r = box.radius
+    inside = ((gx - box.x) ** 2 + (gy - box.y) ** 2) <= r * r
+    inside &= (gx >= x0) & (gx < x1)
+
+    cov = inside.reshape(nh, s, nw, s).mean(axis=(1, 3))
+    return cov, (px0, py0, px1, py1)
+
+
+def _paint_circle_slice(img: np.ndarray, box: NodeBox,
+                        x0: float, x1: float, rgb: np.ndarray) -> None:
+    """Alpha-composite one wedge of a compound circle onto the image."""
+    cov, (px0, py0, px1, py1) = _circle_coverage(box, x0, x1)
+    h, w = img.shape[:2]
+    cx0, cy0 = max(0, px0), max(0, py0)
+    cx1, cy1 = min(w, px1), min(h, py1)
+    if cx1 <= cx0 or cy1 <= cy0:
+        return
+
+    sub = cov[cy0 - py0:cy1 - py0, cx0 - px0:cx1 - px0][..., None]
+    if sub.size == 0:
+        return
+
+    region = img[cy0:cy1, cx0:cx1, :3].astype(np.float32)
+    blended = region * (1.0 - sub) + rgb.astype(np.float32) * sub
+    img[cy0:cy1, cx0:cx1, :3] = np.clip(blended, 0, 255).astype(np.uint8)
+
+
+def paint_nodes(
+    img: np.ndarray,
+    plot_data: pl.DataFrame | None,
+    col_data: pl.DataFrame | None,
+    node_kind: str = "gene",
 ) -> np.ndarray:
     """
-    Paint gene-node rectangles onto a H×W×3 uint8 image array.
+    Paint node colours onto an H x W x 3 uint8 image.
 
-    The node width is divided evenly across multi-state colour columns so
-    that each experiment gets a horizontal slice of the node box.
+    Multi-column data becomes vertical slices across the node, one per
+    experiment, in column order.
     """
-    h = img.shape[0]
-    ccols = _color_cols(col_data)
-    n_states = len(ccols)
-    col_lookup = {row["id"]: row for row in col_data.iter_rows(named=True)}
+    if plot_data is None or col_data is None or plot_data.is_empty():
+        return img
 
-    for row in plot_data.iter_rows(named=True):
-        cx, cy   = row["x"], row["y"]
-        cy = h - cy # Flip y to convert from math to image coordinate space
-        hw, hh   = row["width"] / 2, row["height"] / 2
-        px_l     = max(0, int(cx - hw))
-        px_r     = min(img.shape[1], int(cx + hw))
-        py_t     = max(0, int(h - cy - hh))
-        py_b     = min(h, int(h - cy + hh))
-        x_breaks = np.linspace(px_l, px_r, n_states + 1, dtype=int)
+    ccols = _color_columns(col_data)
+    if not ccols:
+        return img
 
-        node_cols = col_lookup.get(row["entry_id"], {})
-        for k, ccol in enumerate(ccols):
-            rgb = _hex_to_rgb255(node_cols.get(ccol, ""))
-            if rgb is None:
+    lookup = _color_lookup(col_data)
+    boxes = node_boxes(plot_data, default_type=node_kind)
+
+    for box in boxes:
+        row = lookup.get(box.entry_id)
+        if not row:
+            continue
+        bands = slice_bounds(box, len(ccols))
+        for (x0, x1), ccol in zip(bands, ccols):
+            color = row.get(ccol)
+            if is_transparent(color):
                 continue
-            sl_l, sl_r = int(x_breaks[k]), int(x_breaks[k + 1])
-            region = img[py_t:py_b, sl_l:sl_r, :3]
-            # Keep black pixels (borders / text)
-            mask = region.sum(axis=2) > 0
-            region[mask] = rgb
-            img[py_t:py_b, sl_l:sl_r, :3] = region
+            rgb = np.array(to_rgb(color), dtype=np.uint8)
+            if box.is_round:
+                _paint_circle_slice(img, box, x0, x1, rgb)
+            else:
+                _paint_rect(img, x0, x1, box.top, box.bottom, rgb)
 
     return img
 
 
-def _paint_cpd_nodes(
-    img: np.ndarray,
-    plot_data: pl.DataFrame,
-    col_data: pl.DataFrame,
-) -> np.ndarray:
+# ---------------------------------------------------------------------------
+# keggview_native
+# ---------------------------------------------------------------------------
+
+def render_native_array(
+    plot_data_gene=None, cols_gene=None,
+    plot_data_cpd=None, cols_cpd=None,
+    background: str | Path = "",
+):
     """
-    Paint compound-node ellipses onto a H×W×3 uint8 image array.
+    Paint the data onto the KEGG PNG and return a :class:`RasterFrame`.
 
-    Multi-state colours are applied as vertical slices through the circle.
+    The frame is in KGML pixel space at scale 1, because KEGG's map image and
+    its KGML coordinates share an origin and a unit.
     """
-    h, w_img = img.shape[:2]
-    ccols = _color_cols(col_data)
-    n_states = len(ccols)
-    yy, xx = np.mgrid[0:h, 0:w_img]
-    col_lookup = {row["id"]: row for row in col_data.iter_rows(named=True)}
+    from PIL import Image
 
-    for row in plot_data.iter_rows(named=True):
-        cx, cy, r = row["x"], row["y"], row["width"]
-        cy = h - cy # Flip y to convert from math to image coordinate space
-        dist_sq   = (xx - cx) ** 2 + (yy - cy) ** 2
-        inside    = dist_sq < r ** 2
-        border    = (dist_sq >= (r - 2) ** 2) & inside
-        x_breaks  = np.linspace(cx - r, cx + r, n_states + 1)
+    from .layout import RasterFrame
 
-        node_cols = col_lookup.get(row["entry_id"], {})
-        for k, ccol in enumerate(ccols):
-            rgb = _hex_to_rgb255(node_cols.get(ccol, ""))
-            if rgb is None:
-                continue
-            mask = inside & (xx >= x_breaks[k]) & (xx < x_breaks[k + 1])
-            img[mask, :3] = rgb
-
-        img[border, :3] = 0   # restore black border
-
-    return img
+    img = np.array(Image.open(background).convert("RGB"), dtype=np.uint8)
+    img = paint_nodes(img, plot_data_gene, cols_gene, "gene")
+    img = paint_nodes(img, plot_data_cpd, cols_cpd, "compound")
+    return RasterFrame(img, x0=0.0, y0=0.0, scale=1.0)
 
 
 def keggview_native(
-    plot_data_gene: Optional[pl.DataFrame],
-    cols_gene: Optional[pl.DataFrame],
-    plot_data_cpd: Optional[pl.DataFrame],
-    cols_cpd: Optional[pl.DataFrame],
-    node_data: pl.DataFrame,
-    pathway_name: str,
-    kegg_dir: Path = Path("."),
+    plot_data_gene: pl.DataFrame | None = None,
+    cols_gene: pl.DataFrame | None = None,
+    plot_data_cpd: pl.DataFrame | None = None,
+    cols_cpd: pl.DataFrame | None = None,
+    node_data: pl.DataFrame | None = None,
+    pathway_name: str = "pathway",
+    kegg_dir: str | Path = ".",
+    out_dir: str | Path | None = None,
     out_suffix: str = "pathview",
-    limit: dict | None = None,
-    bins: dict | None = None,
-    both_dirs: dict | None = None,
-    discrete: dict | None = None,
-    low: dict | None = None,
-    mid: dict | None = None,
-    high: dict | None = None,
+    gene_scale: ColorScale | None = None,
+    cpd_scale: ColorScale | None = None,
+    title: str | None = None,
     new_signature: bool = True,
     plot_col_key: bool = True,
-    dpi: int = 150,
-) -> None:
+    dpi: int = 200,
+    background: str | Path | None = None,
+    output_format: str = "png",
+) -> Path:
     """
-    Render expression data overlaid on the KEGG pathway PNG background.
+    Overlay data onto the KEGG background PNG and save the figure.
 
-    Reads ``<kegg_dir>/<pathway_name>.png``, paints gene and compound nodes
-    with the supplied colour data, and writes
-    ``<kegg_dir>/<pathway_name>.<out_suffix>.png``.
+    Returns the path written.
     """
-    if limit     is None: limit     = {"gene": 1, "cpd": 1}
-    if bins      is None: bins      = {"gene": 10, "cpd": 10}
-    if both_dirs is None: both_dirs = {"gene": True, "cpd": True}
-    if discrete  is None: discrete  = {"gene": False, "cpd": False}
-    if low       is None: low       = {"gene": "green", "cpd": "blue"}
-    if mid       is None: mid       = {"gene": "gray",  "cpd": "gray"}
-    if high      is None: high      = {"gene": "red",   "cpd": "yellow"}
+    import matplotlib
+    matplotlib.use("Agg", force=False)
+    import matplotlib.pyplot as plt
 
-    png_path = Path(kegg_dir) / f"{pathway_name}.png"
+    kegg_dir = Path(kegg_dir)
+    out_dir = Path(out_dir) if out_dir is not None else kegg_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    png_path = Path(background) if background else kegg_dir / f"{pathway_name}.png"
     if not png_path.exists():
-        raise FileNotFoundError(f"Background PNG not found: {png_path}")
+        raise RenderError(
+            f"Background image not found: {png_path}. "
+            "KEGG's PNG is required for kegg_native rendering; use "
+            "render_mode='vector' to draw the map from the KGML instead, "
+            "which needs no background and works offline."
+        )
 
-    img = np.array(Image.open(png_path).convert("RGB"), dtype=np.uint8)
-
-    if plot_data_gene is not None and cols_gene is not None:
-        img = _paint_gene_nodes(img, plot_data_gene, cols_gene)
-    if plot_data_cpd is not None and cols_cpd is not None:
-        img = _paint_cpd_nodes(img, plot_data_cpd, cols_cpd)
+    frame = render_native_array(plot_data_gene, cols_gene,
+                                plot_data_cpd, cols_cpd, background=png_path)
+    img = frame.array
 
     h, w = img.shape[:2]
-    key_height = 0.6 if plot_col_key else 0.0
-    fig, axes = plt.subplots(
-        nrows=2 if plot_col_key else 1,
-        figsize=(w / dpi, h / dpi + key_height),
-        gridspec_kw={"height_ratios": [h, int(dpi * key_height)]} if plot_col_key else None,
-    )
-    ax_img = axes[0] if plot_col_key else axes
+    fig_w = min(16.0, max(8.0, w / 110))
+    fig_h = fig_w * h / w
 
-    ax_img.imshow(img, aspect="auto")
-    ax_img.axis("off")
+    keys = [s for s in (gene_scale, cpd_scale) if s is not None] if plot_col_key else []
+    key_band = 0.085 if keys else 0.0
+    title_band = 0.05 if title else 0.0
+
+    fig = plt.figure(figsize=(fig_w, fig_h * (1 + key_band + title_band)),
+                     facecolor="white")
+    ax = fig.add_axes([0.01, key_band + 0.02, 0.98,
+                       0.96 - key_band - title_band])
+    ax.imshow(img, interpolation="antialiased", aspect="equal")
+    ax.set_axis_off()
+
+    if title:
+        fig.text(0.5, 0.985, title, ha="center", va="top",
+                 fontsize=12.5, fontweight="semibold", color="#1A1A1A")
+
+    if keys:
+        draw_dual_key(fig, gene_scale, cpd_scale,
+                      rect=(0.12, 0.035, 0.76, 0.028), label_size=7.5)
 
     if new_signature:
-        ax_img.text(
-            0.02, 0.02, "Rendered by pathview.py",
-            #transform=ax_img.transAxes, #TODO: This lable looks better on top
-            fontsize=6, color="black", fontweight="bold", va="bottom",
-        )
+        fig.text(0.995, 0.006, "pathview-plus", ha="right", va="bottom",
+                 fontsize=6.5, color="#9AA0A6", style="italic")
 
-    if plot_col_key and plot_data_gene is not None:
-        draw_color_key(
-            ax_img,
-            limit=limit["gene"], bins=bins["gene"],
-            both_dirs=both_dirs["gene"], discrete=discrete["gene"],
-            low=low["gene"], mid=mid["gene"], high=high["gene"],
-        )
-        if plot_col_key:
-            axes[1].set_visible(False)
-
-    out_path = Path(kegg_dir) / f"{pathway_name}.{out_suffix}.png"
-    fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
+    out_path = out_dir / f"{pathway_name}.{out_suffix}.{output_format}"
+    fig.savefig(out_path, dpi=dpi, facecolor="white",
+                bbox_inches="tight", pad_inches=0.12)
     plt.close(fig)
-    print(f"Info: Written → {out_path}")
-
-
-# ---------------------------------------------------------------------------
-# Graph view  (NetworkX / Seaborn)
-# ---------------------------------------------------------------------------
-
-def keggview_graph(
-    plot_data_gene: Optional[pl.DataFrame],
-    cols_gene: Optional[pl.DataFrame],
-    plot_data_cpd: Optional[pl.DataFrame],
-    cols_cpd: Optional[pl.DataFrame],
-    node_data: pl.DataFrame,
-    pathway_name: str,
-    out_suffix: str = "pathview",
-    kegg_dir: Path = Path("."),
-    cex: float = 0.7,
-    limit: dict | None = None,
-    bins: dict | None = None,
-    both_dirs: dict | None = None,
-    low: dict | None = None,
-    mid: dict | None = None,
-    high: dict | None = None,
-    new_signature: bool = True,
-    plot_col_key: bool = True,
-) -> None:
-    """
-    Render pathway as a NetworkX directed graph with Seaborn styling.
-
-    Nodes are positioned using the KGML (x, y) coordinates.  Saves a PDF to
-    ``<kegg_dir>/<pathway_name>.<out_suffix>.pdf``.
-    """
-    try:
-        import networkx as nx
-    except ImportError:
-        raise ImportError("networkx is required for graph view: pip install networkx")
-
-    if limit     is None: limit     = {"gene": 1, "cpd": 1}
-    if bins      is None: bins      = {"gene": 10, "cpd": 10}
-    if both_dirs is None: both_dirs = {"gene": True, "cpd": True}
-    if low       is None: low       = {"gene": "green", "cpd": "blue"}
-    if mid       is None: mid       = {"gene": "gray",  "cpd": "gray"}
-    if high      is None: high      = {"gene": "red",   "cpd": "yellow"}
-
-    # Build colour lookup from both gene and compound colour DataFrames
-    color_lookup: dict[str, str] = {}
-    for col_df in (cols_gene, cols_cpd):
-        if col_df is not None:
-            first_col = next((c for c in col_df.columns if c.endswith("_col")), None)
-            if first_col:
-                for row in col_df.iter_rows(named=True):
-                    color_lookup.setdefault(row["id"], row[first_col])
-
-    # Build directed graph from node_data
-    G = nx.DiGraph()
-    for row in node_data.iter_rows(named=True):
-        G.add_node(row["entry_id"], **row)
-
-    pos = {
-        row["entry_id"]: (
-            row["x"] if row["x"] is not None else 0.0,
-            -(row["y"] if row["y"] is not None else 0.0),
-        )
-        for row in node_data.iter_rows(named=True)
-    }
-    node_colors = [color_lookup.get(n, "#CCCCCC") for n in G.nodes]
-    node_labels = {
-        row["entry_id"]: wordwrap(row.get("label", ""), width=12)
-        for row in node_data.iter_rows(named=True)
-    }
-
-    with sns.axes_style("white"):
-        fig, ax = plt.subplots(figsize=(14, 10))
-        ax.set_title(pathway_name, fontsize=12, fontweight="bold")
-
-        #TODO: Temporary fix, update prior steps that use transparent instead of none
-        node_colors = ['none' if x=='transparent' else x for x in node_colors]
-        nx.draw_networkx(
-            G,
-            pos=pos,
-            ax=ax,
-            labels=node_labels,
-            node_color=node_colors,
-            node_size=800,
-            font_size=cex * 10,
-            arrows=True,
-            arrowsize=12,
-            edge_color="#555555",
-        )
-
-        if plot_col_key:
-            draw_color_key(
-                ax,
-                limit=limit["gene"], bins=bins["gene"],
-                both_dirs=both_dirs["gene"],
-                low=low["gene"], mid=mid["gene"], high=high["gene"],
-            )
-
-        if new_signature:
-            ax.text(
-                0.01, 0.01, "Rendered by pathview.py",
-                transform=ax.transAxes, fontsize=7, va="bottom",
-            )
-        ax.axis("off")
-
-    out_path = Path(kegg_dir) / f"{pathway_name}.{out_suffix}.pdf"
-    fig.savefig(out_path, bbox_inches="tight")
-    plt.close(fig)
-    print(f"Info: Written → {out_path}")
-
-
-# ---------------------------------------------------------------------------
-# KEGG legend
-# ---------------------------------------------------------------------------
-
-def kegg_legend(
-    legend_type: str = "both",
-) -> None:
-    """
-    Display a standalone reference legend for KEGG pathway elements.
-
-    Parameters
-    ----------
-    legend_type: One of "both", "edge", or "node".
-    """
-    if legend_type not in ("both", "edge", "node"):
-        warnings.warn(f"legend_type must be 'both', 'edge', or 'node'; got '{legend_type}'.")
-        return
-
-    n = len(_EDGE_SUBTYPES)
-    with sns.axes_style("white"):
-        fig, ax = plt.subplots(figsize=(9, 7))
-        ax.set_xlim(-0.2, 4.5)
-        ax.set_ylim(-0.5, n + 1.5)
-        ax.axis("off")
-        ax.set_title("KEGG Diagram Legend", fontweight="bold", fontsize=12)
-
-        _line_styles = {"solid": "-", "dashed": "--", "dotted": ":"}
-
-        if legend_type in ("both", "edge"):
-            ax.text(0.9, n + 1.0, "Edge Types", fontsize=10, fontweight="bold", ha="right")
-            for i, (name, col, label, style, arrow) in enumerate(_EDGE_SUBTYPES):
-                y = n - i - 0.5
-                ax.text(0.85, y, name, ha="right", va="center", fontsize=8)
-                ax.annotate(
-                    "",
-                    xy=(1.8, y), xytext=(1.0, y),
-                    arrowprops=dict(
-                        arrowstyle="->" if arrow == "normal" else "-|>",
-                        color=col,
-                        linestyle=_line_styles.get(style, "-"),
-                        lw=1.5,
-                    ),
-                )
-                ax.text(1.4, y + 0.22, label, color=col, fontsize=7, ha="center")
-
-        if legend_type in ("both", "node"):
-            x_off = 2.5 if legend_type == "both" else 0.5
-            ax.text(x_off + 1.2, n + 1.0, "Node Types", fontsize=10, fontweight="bold", ha="right")
-            node_specs = [
-                ("gene / protein / enzyme", "rectangle"),
-                ("compound / metabolite",   "ellipse"),
-                ("pathway link",            "text"),
-            ]
-            for i, (label, shape) in enumerate(node_specs):
-                y = n - i * 3.5 - 0.5
-                ax.text(x_off + 1.1, y, label, ha="right", va="center", fontsize=8)
-                xc = x_off + 1.5
-                if shape == "ellipse":
-                    ax.add_patch(mpatches.Ellipse(
-                        (xc, y), 0.45, 0.28, color="#DDDDDD", ec="black", lw=1,
-                    ))
-                elif shape == "rectangle":
-                    ax.add_patch(mpatches.FancyBboxPatch(
-                        (xc - 0.22, y - 0.14), 0.44, 0.28,
-                        boxstyle="square", color="#DDDDDD", ec="black", lw=1,
-                    ))
-                else:
-                    ax.text(xc, y, "Pathway Name", ha="center", va="center",
-                            fontsize=8, style="italic")
-
-    plt.tight_layout()
-    plt.show()
+    return out_path

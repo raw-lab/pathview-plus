@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sbgn xmlns="http://sbgn.org/libsbgn/pd/0.1">
+  <map language="process description" id="port_demo">
+    <glyph class="compartment" id="cytosol">
+      <label text="cytosol"/><bbox x="10" y="10" w="600" h="300"/>
+    </glyph>
+    <glyph class="simple chemical" id="glc" compartmentRef="cytosol">
+      <label text="D-Glucose"/><bbox x="40" y="120" w="60" h="60"/>
+      <annotation><rdf><li resource="http://identifiers.org/kegg:C00031"/></rdf></annotation>
+    </glyph>
+    <glyph class="macromolecule" id="hk1" compartmentRef="cytosol">
+      <label text="HK1"/><bbox x="200" y="40" w="90" h="45"/>
+      <glyph class="state variable" id="hk1_p"><state variable="residue" value="P"/><bbox x="200" y="40" w="18" h="18"/></glyph>
+      <annotation><rdf><li resource="http://identifiers.org/uniprot:P19367"/></rdf></annotation>
+    </glyph>
+    <glyph class="process" id="rxn1">
+      <bbox x="220" y="130" w="30" h="30"/>
+      <port id="rxn1.in" x="220" y="145"/>
+      <port id="rxn1.out" x="250" y="145"/>
+    </glyph>
+    <glyph class="simple chemical" id="g6p" compartmentRef="cytosol">
+      <label text="G6P"/><bbox x="400" y="120" w="60" h="60"/>
+      <clone/>
+      <annotation><rdf><li resource="http://identifiers.org/kegg:C00092"/></rdf></annotation>
+    </glyph>
+    <arc class="consumption" id="a1" source="glc" target="rxn1.in">
+      <start x="100" y="150"/><end x="220" y="145"/>
+    </arc>
+    <arc class="production" id="a2" source="rxn1.out" target="g6p">
+      <start x="250" y="145"/><next x="330" y="140"/><end x="400" y="150"/>
+    </arc>
+    <arc class="catalysis" id="a3" source="hk1" target="rxn1">
+      <start x="245" y="85"/><end x="235" y="130"/>
+    </arc>
+  </map>
+</sbgn>

@@ -1,342 +1,254 @@
 """
 examples.py
-Comprehensive examples demonstrating pathview.py features including the new
-SBGNview-inspired additions: SVG rendering, highlighting, and spline curves.
+Runnable examples, using only bundled data.
 
-Run these examples to explore all capabilities.
+Every function here works offline and returns the path it wrote, so the whole
+module can be executed as a smoke test of a fresh installation:
+
+    python -m pathview.examples --out figures
+
+The examples deliberately use ``demo_gene_data()`` (real GSE16873 breast
+cancer log2 ratios, bundled) rather than random numbers, so the mapping path
+they exercise is the same one user data takes.
 """
 
+from __future__ import annotations
+
+from pathlib import Path
+
 import polars as pl
-from pathview import (
-    pathview,
-    highlight_nodes,
-    highlight_edges,
-    highlight_path,
-    cubic_bezier,
-    kegg_legend,
-    sim_mol_data,
-)
+
+from .cache import is_offline
+from .mol_data import demo_cpd_data, demo_gene_data
 
 
-# ===========================================================================
-# Example 1: Basic pathway visualization (PNG output)
-# ===========================================================================
-
-def example_basic_png():
-    """Most common use case: overlay expression data on KEGG pathway (PNG)."""
-    print("\n" + "="*70)
-    print("Example 1: Basic pathway visualization (PNG)")
-    print("="*70)
-    
-    # Simulated data
-    gene_df = sim_mol_data(mol_type="gene", species="hsa", n_mol=100, n_exp=1)
-    
-    result = pathview(
-        pathway_id="04110",  # Cell cycle
-        gene_data=gene_df,
-        species="hsa",
-        output_format="png",  # Default
-        out_suffix="example1_basic",
-    )
-    print("✓ Generated: hsa04110.example1_basic.png")
+def _kgml_available(kegg_dir: Path, pathway: str) -> bool:
+    return (kegg_dir / f"{pathway}.xml").exists() or not is_offline()
 
 
-# ===========================================================================
-# Example 2: SVG output (vector graphics)
-# ===========================================================================
+# ---------------------------------------------------------------------------
+# KEGG
+# ---------------------------------------------------------------------------
 
-def example_svg_output():
-    """NEW: Generate scalable SVG instead of pixel-based PNG."""
-    print("\n" + "="*70)
-    print("Example 2: SVG vector output")
-    print("="*70)
-    
-    gene_df = sim_mol_data(mol_type="gene", species="hsa", n_mol=100, n_exp=1)
-    
-    result = pathview(
-        pathway_id="04110",
-        gene_data=gene_df,
-        species="hsa",
-        output_format="svg",  # NEW: SVG mode
-        out_suffix="example2_svg",
-    )
-    print("✓ Generated: hsa04110.example2_svg.svg")
-    print("  → Open in browser or vector graphics editor")
-    print("  → Scalable, smaller file size, web-native")
+def example_basic(out_dir: str | Path = ".", kegg_dir: str | Path = ".") -> Path:
+    """Cell cycle with one condition of real expression data."""
+    from .pathview import pathview
+
+    res = pathview("04110", gene_data=demo_gene_data(1), species="hsa",
+                   kegg_dir=kegg_dir, out_dir=out_dir,
+                   out_suffix="example_basic", limit=1.5, quiet=True)
+    return res.output_path
 
 
-# ===========================================================================
-# Example 3: Multi-condition comparison
-# ===========================================================================
+def example_multi_condition(out_dir: str | Path = ".",
+                            kegg_dir: str | Path = ".") -> Path:
+    """Two conditions: each node splits into two vertical bands."""
+    from .pathview import pathview
 
-def example_multi_condition():
-    """Visualize multiple experimental conditions side-by-side."""
-    print("\n" + "="*70)
-    print("Example 3: Multi-condition comparison")
-    print("="*70)
-    
-    # Three experimental conditions
-    gene_df = sim_mol_data(mol_type="gene", species="hsa", n_mol=150, n_exp=3)
-    gene_df = gene_df.rename({
-        "exp1": "Control",
-        "exp2": "Treatment_A",
-        "exp3": "Treatment_B",
+    res = pathview("04110", gene_data=demo_gene_data(2), species="human",
+                   kegg_dir=kegg_dir, out_dir=out_dir,
+                   out_suffix="example_multi", limit=1.5, quiet=True)
+    return res.output_path
+
+
+def example_gene_and_metabolite(out_dir: str | Path = ".",
+                                kegg_dir: str | Path = ".") -> Path:
+    """
+    Transcripts and metabolites on one map, on independent scales.
+
+    This is the case the package is built around: two colour scales and two
+    keys, so a transcript at +2 and a metabolite at +2 are not read off the
+    same ruler.
+    """
+    from .kgml_parser import node_info, parse_kgml
+    from .pathview import pathview
+
+    kegg_dir = Path(kegg_dir)
+    cpds: list[str] = []
+    kgml = kegg_dir / "hsa00020.xml"
+    if kgml.exists():
+        nodes = node_info(parse_kgml(kgml))
+        cpds = [c for row in nodes.filter(pl.col("type") == "compound")["kegg_names"]
+                .to_list() for c in row]
+
+    res = pathview("00020", gene_data=demo_gene_data(1),
+                   cpd_data=demo_cpd_data(cpds or None, n_mol=20),
+                   species="human", kegg_dir=kegg_dir, out_dir=out_dir,
+                   out_suffix="example_dual", render_mode="vector",
+                   limit={"gene": 1.5, "cpd": 1.5},
+                   subtitle="GSE16873 transcriptome + metabolite abundances",
+                   quiet=True)
+    return res.output_path
+
+
+def example_compound_names(out_dir: str | Path = ".",
+                           kegg_dir: str | Path = ".") -> Path:
+    """
+    Metabolite names rather than accessions.
+
+    Conjugate-base forms resolve offline: "Pyruvate" finds "Pyruvic acid".
+    """
+    from .pathview import pathview
+
+    cpds = pl.DataFrame({
+        "name": ["Pyruvate", "Citrate", "2-Oxoglutarate", "Succinate",
+                 "Fumarate", "L-Malate", "Oxaloacetate", "Acetyl-CoA"],
+        "log2fc": [1.4, -0.8, 0.3, -1.6, 0.9, -0.4, 1.1, -1.2],
     })
-    
-    result = pathview(
-        pathway_id="04010",  # MAPK signaling
-        gene_data=gene_df,
-        species="hsa",
-        out_suffix="example3_multistate",
-        limit={"gene": 2.0, "cpd": 1.0},
-    )
-    print("✓ Each node is sliced into 3 color bands (one per condition)")
+    res = pathview("00020", cpd_data=cpds, cpd_idtype="NAME", species="hsa",
+                   kegg_dir=kegg_dir, out_dir=out_dir,
+                   out_suffix="example_names", render_mode="vector",
+                   limit=1.5, quiet=True)
+    return res.output_path
 
 
-# ===========================================================================
-# Example 4: Custom color scales
-# ===========================================================================
+def example_batch(out_dir: str | Path = ".", kegg_dir: str | Path = "."):
+    """Several pathways in one call; a failure is recorded, not raised."""
+    from .pathview import pathview
 
-def example_custom_colors():
-    """Use custom color schemes (e.g., ColorBrewer palettes)."""
-    print("\n" + "="*70)
-    print("Example 4: Custom color scales")
-    print("="*70)
-    
-    gene_df = sim_mol_data(mol_type="gene", species="hsa", n_mol=100, n_exp=1)
-    
-    result = pathview(
-        pathway_id="04151",  # PI3K-Akt signaling
-        gene_data=gene_df,
-        species="hsa",
-        out_suffix="example4_custom_colors",
-        low={"gene": "#2166AC", "cpd": "#4575B4"},  # Blue scale
-        mid={"gene": "#F7F7F7", "cpd": "#F7F7F7"},  # White
-        high={"gene": "#D6604D", "cpd": "#B2182B"}, # Red scale
-        limit={"gene": 2.5, "cpd": 1.5},
-    )
-    print("✓ ColorBrewer RdBu diverging palette applied")
+    return pathview(["00020", "04110"], gene_data=demo_gene_data(1),
+                    species="hsa", kegg_dir=kegg_dir, out_dir=out_dir,
+                    out_suffix="example_batch", render_mode="vector",
+                    limit=1.5, quiet=True)
 
 
-# ===========================================================================
-# Example 5: Highlighting (NEW feature)
-# ===========================================================================
+def example_expansion(out_dir: str | Path = ".", kegg_dir: str | Path = ".") -> Path:
+    """Complexes split into subunits, paralogue families into single genes."""
+    from .pathview import pathview
 
-def example_highlighting():
-    """
-    NEW: Layer-by-layer modifications after rendering.
-    Highlight specific genes, edges, or paths without re-rendering.
-    """
-    print("\n" + "="*70)
-    print("Example 5: Highlighting with composable layers")
-    print("="*70)
-    
-    gene_df = pl.DataFrame({
-        "entrez": ["1956", "2099", "5594", "207", "4609"],
-        "lfc":    [ 2.3,   -1.1,    1.8,  -0.5,   3.1],
+    res = pathview("04110", gene_data=demo_gene_data(1), species="hsa",
+                   kegg_dir=kegg_dir, out_dir=out_dir,
+                   out_suffix="example_expanded", render_mode="vector",
+                   split_group=True, expand_node=True, limit=1.5, quiet=True)
+    return res.output_path
+
+
+def example_highlighting(out_dir: str | Path = ".",
+                         kegg_dir: str | Path = ".") -> Path:
+    """Composable post-hoc emphasis."""
+    from .highlighting import change_labels, highlight_nodes, highlight_path
+    from .pathview import pathview
+
+    res = pathview("04110", gene_data=demo_gene_data(1), species="hsa",
+                   kegg_dir=kegg_dir, out_dir=out_dir,
+                   out_suffix="example_hl", limit=1.5, quiet=True)
+    annotated = (res
+                 + highlight_nodes(["1017", "1019", "595"], color="#7C3AED", width=3)
+                 + highlight_path(["595", "983"], color="#F59E0B")
+                 + change_labels({"1017": "CDK2 *"}))
+    return annotated.save(Path(out_dir) / "example_highlighted.png")
+
+
+# ---------------------------------------------------------------------------
+# SBGN
+# ---------------------------------------------------------------------------
+
+def example_sbgn(sbgn_file: str | Path, out_dir: str | Path = ".") -> Path:
+    """Render a local SBGN file with compartment shading."""
+    from .sbgnview import sbgnview
+
+    genes = pl.DataFrame({
+        "symbol": ["CPS1", "OTC", "ASS1", "ASL", "ARG1", "GLS2", "GOT2", "GLUD1"],
+        "log2fc": [1.5, -1.2, 0.8, -0.4, 1.9, -1.6, 0.5, 1.1],
     })
-    
-    # Base visualization
-    result = pathview(
-        pathway_id="04010",
-        gene_data=gene_df,
-        species="hsa",
-        out_suffix="example5_base",
-    )
-    
-    # Apply highlighting layers (ggplot2-style)
-    print("\nApplying highlighting layers...")
-    print("  1. Highlight EGFR and ESR1 in red")
-    print("  2. Highlight edge between them in blue")
-    print("  3. Highlight entire MAPK cascade path in orange")
-    
-    # Note: Highlighting requires PathwayResult object which we'll implement fully
-    # This is a preview of the API design
-    # highlighted = (
-    #     result
-    #     + highlight_nodes(["1956", "2099"], color="red", width=4)
-    #     + highlight_edges([("1956", "2099")], color="blue", width=3)
-    #     + highlight_path(["1956", "2099", "5594"], color="orange")
-    # )
-    # highlighted.save("hsa04010.example5_highlighted.png")
-    
-    print("✓ Highlighting API demonstrated (full implementation pending)")
+    res = sbgnview(sbgn_file, gene_data=genes, gene_idtype="SYMBOL",
+                   out_dir=out_dir, out_suffix="example_sbgn",
+                   show_compartments=True, limit=1.5, quiet=True)
+    return res.output_path
 
 
-# ===========================================================================
-# Example 6: Gene symbol IDs
-# ===========================================================================
+def example_sbgn_collection(pathway_id: str = "SMP00001",
+                            out_dir: str | Path = ".",
+                            sbgn_dir: str | Path = ".") -> Path:
+    """
+    Render from the pre-generated SBGN collection.
 
-def example_gene_symbols():
-    """Use gene symbols instead of Entrez IDs."""
-    print("\n" + "="*70)
-    print("Example 6: Gene symbol IDs")
-    print("="*70)
-    
-    gene_df = pl.DataFrame({
-        "symbol": ["TP53", "EGFR", "KRAS", "PIK3CA", "AKT1"],
-        "lfc":    [ -1.8,   2.4,    1.1,    1.5,     0.9],
+    Needs one download the first time; the file is cached afterwards.
+    """
+    from .sbgnview import sbgnview
+
+    genes = pl.DataFrame({
+        "symbol": ["CPS1", "OTC", "ASS1", "ASL", "ARG1", "GLS2", "GOT2", "GLUD1"],
+        "log2fc": [1.5, -1.2, 0.8, -0.4, 1.9, -1.6, 0.5, 1.1],
     })
-    
-    result = pathview(
-        pathway_id="04151",
-        gene_data=gene_df,
-        species="hsa",
-        gene_idtype="SYMBOL",  # Automatic conversion to Entrez
-        out_suffix="example6_symbols",
-    )
-    print("✓ Symbols automatically converted via MyGene.info")
+    res = sbgnview(pathway_id, gene_data=genes, gene_idtype="SYMBOL",
+                   sbgn_dir=sbgn_dir, out_dir=out_dir,
+                   out_suffix="example_collection", limit=1.5, quiet=True)
+    return res.output_path
 
 
-# ===========================================================================
-# Example 7: Combined gene + metabolite data
-# ===========================================================================
+# ---------------------------------------------------------------------------
+# Offline-only examples: these never touch the network
+# ---------------------------------------------------------------------------
 
-def example_gene_plus_compound():
-    """Overlay both gene expression and metabolite abundance."""
-    print("\n" + "="*70)
-    print("Example 7: Combined gene + metabolite data")
-    print("="*70)
-    
-    gene_df = sim_mol_data(mol_type="gene", species="hsa", n_mol=80, n_exp=1)
-    cpd_df = sim_mol_data(mol_type="cpd", n_mol=30, n_exp=1)
-    
-    result = pathview(
-        pathway_id="00010",  # Glycolysis / Gluconeogenesis
-        gene_data=gene_df,
-        cpd_data=cpd_df,
-        species="hsa",
-        out_suffix="example7_gene_cpd",
-        limit={"gene": 2.0, "cpd": 1.5},
-        low={"gene": "green", "cpd": "blue"},
-        high={"gene": "red", "cpd": "yellow"},
-    )
-    print("✓ Gene (rectangles) and compound (ellipses) overlays combined")
+def example_species_lookup() -> dict:
+    """Species resolution, entirely from the bundled table."""
+    from .organisms import get_species_code, organism_count
+
+    return {
+        "organisms_bundled": organism_count(),
+        "resolved": {q: get_species_code(q).kegg_code
+                     for q in ("human", "Mus musculus", "9606", "E. coli", "yeast")},
+    }
 
 
-# ===========================================================================
-# Example 8: Graph layout mode (no PNG background)
-# ===========================================================================
+def example_identifier_routing() -> dict:
+    """Crosswalk routing between identifier systems, offline."""
+    from .sbgn_hub import id_route, map_ids_to_sbgn
 
-def example_graph_layout():
-    """Use NetworkX graph layout instead of KEGG PNG background."""
-    print("\n" + "="*70)
-    print("Example 8: Graph layout mode (PDF output)")
-    print("="*70)
-    
-    gene_df = sim_mol_data(mol_type="gene", species="hsa", n_mol=100, n_exp=1)
-    
-    result = pathview(
-        pathway_id="04010",
-        gene_data=gene_df,
-        species="hsa",
-        kegg_native=False,  # Switch to graph mode
-        output_format="pdf",
-        out_suffix="example8_graph",
-    )
-    print("✓ Generated: hsa04010.example8_graph.pdf")
-    print("  → NetworkX layout with Seaborn styling")
+    return {
+        "entrez_to_symbol_route": id_route("ENTREZ", "SYMBOL"),
+        "mapped": map_ids_to_sbgn(["1017", "7157"], "ENTREZ", "SYMBOL").to_dicts(),
+    }
 
 
-# ===========================================================================
-# Example 9: Spline curves (NEW)
-# ===========================================================================
+def example_collection_summary() -> dict:
+    """What is in the pre-generated SBGN collection, offline."""
+    from .sbgn_hub import sbgn_collection_info
 
-def example_spline_curves():
-    """
-    NEW: Demonstrate Bezier curve generation.
-    (Future: integrate into pathway edge rendering)
-    """
-    print("\n" + "="*70)
-    print("Example 9: Spline curves (Bezier paths)")
-    print("="*70)
-    
-    import matplotlib.pyplot as plt
-    
-    # Generate cubic Bezier curve
-    curve = cubic_bezier(
-        p0=(0, 0),      # Start
-        p1=(1, 2),      # Control point 1
-        p2=(3, 2),      # Control point 2
-        p3=(4, 0),      # End
-        n_points=100
-    )
-    
-    plt.figure(figsize=(8, 4))
-    plt.plot(curve[:, 0], curve[:, 1], 'b-', linewidth=2, label='Cubic Bezier')
-    plt.plot([0, 1, 3, 4], [0, 2, 2, 0], 'ro--', alpha=0.5, label='Control points')
-    plt.title("Bezier Curve Example")
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.axis('equal')
-    plt.tight_layout()
-    plt.savefig("example9_bezier_curve.png", dpi=150)
-    plt.close()
-    
-    print("✓ Generated: example9_bezier_curve.png")
-    print("  → Smooth curves for aesthetic edge routing")
-    print("  → Future: automatic edge routing with obstacle avoidance")
+    return sbgn_collection_info()
 
 
-# ===========================================================================
-# Example 10: Display KEGG legend
-# ===========================================================================
-
-def example_legend():
-    """Show the KEGG pathway element legend."""
-    print("\n" + "="*70)
-    print("Example 10: KEGG pathway legend")
-    print("="*70)
-    
-    # This displays an interactive legend
-    # kegg_legend(legend_type="both")  # Uncomment to show interactive plot
-    
-    print("✓ Run kegg_legend() to see node/edge reference diagram")
+def run_offline_examples() -> dict:
+    """Every example that needs no network at all."""
+    return {
+        "species": example_species_lookup(),
+        "identifiers": example_identifier_routing(),
+        "collection": example_collection_summary(),
+    }
 
 
-# ===========================================================================
-# Run all examples
-# ===========================================================================
+def main(argv: list[str] | None = None) -> int:
+    """``python -m pathview.examples`` — run what the environment allows."""
+    import argparse
+    import json
 
-if __name__ == "__main__":
-    print("\n" + "="*70)
-    print("PATHVIEW.PY COMPREHENSIVE EXAMPLES")
-    print("="*70)
-    print("\nThis script demonstrates all features including new SBGNview additions:")
-    print("  • SVG vector output")
-    print("  • Highlighting layers")
-    print("  • Spline curves")
-    print("  • Multi-condition visualization")
-    print("  • Custom color schemes")
-    print("  • Gene + metabolite overlays")
-    
-    try:
-        example_basic_png()
-        example_svg_output()
-        example_multi_condition()
-        example_custom_colors()
-        example_highlighting()
-        example_gene_symbols()
-        example_gene_plus_compound()
-        example_graph_layout()
-        example_spline_curves()
-        example_legend()
-        
-        print("\n" + "="*70)
-        print("✓ All examples completed successfully!")
-        print("="*70)
-        print("\nCheck the current directory for output files:")
-        print("  • hsa04110.example1_basic.png")
-        print("  • hsa04110.example2_svg.svg")
-        print("  • hsa04010.example3_multistate.png")
-        print("  • hsa04151.example4_custom_colors.png")
-        print("  • hsa04010.example5_base.png")
-        print("  • hsa04151.example6_symbols.png")
-        print("  • hsa00010.example7_gene_cpd.png")
-        print("  • hsa04010.example8_graph.pdf")
-        print("  • example9_bezier_curve.png")
-        
-    except Exception as e:
-        print(f"\n❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--out", default=".", help="output directory")
+    parser.add_argument("--kegg-dir", default=".",
+                        help="directory holding KGML/PNG files")
+    parser.add_argument("--offline-only", action="store_true",
+                        help="run only the examples that need no network")
+    args = parser.parse_args(argv)
+
+    Path(args.out).mkdir(parents=True, exist_ok=True)
+    print(json.dumps(run_offline_examples(), indent=2, default=str))
+
+    if args.offline_only:
+        return 0
+
+    rendered = []
+    for fn in (example_basic, example_multi_condition, example_gene_and_metabolite,
+               example_compound_names, example_expansion, example_highlighting):
+        try:
+            rendered.append(str(fn(args.out, args.kegg_dir)))
+            print(f"ok   {fn.__name__}")
+        except Exception as exc:
+            print(f"skip {fn.__name__}: {exc}")
+    for path in rendered:
+        print(" ", path)
+    return 0
+
+
+if __name__ == "__main__":                                    # pragma: no cover
+    raise SystemExit(main())

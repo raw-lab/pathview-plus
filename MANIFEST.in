@@ -1,0 +1,22 @@
+include README.md
+include LICENSE
+include CHANGELOG.md
+include PARITY.md
+include BUG_CHECKLIST.md
+include CONTRIBUTING.md
+include CITATION.cff
+include requirements.txt
+include pathview_plus_workflow.jpg
+recursive-include bin *.py *.md
+include lib/readme.md
+recursive-include lib/data *.tsv.gz
+# setuptools auto-includes tests/test*.py but not conftest.py, so an sdist
+# built without this line ships a test suite where every fixture-using test
+# errors out. A downstream packager running the tests would see a wall of
+# errors caused purely by packaging.
+include conftest.py
+recursive-include tests *.py
+recursive-include tests/fixtures *.xml *.png *.sbgn
+recursive-include docs *.rst *.md *.py *.yaml
+prune docs/_build
+global-exclude __pycache__ *.py[cod]
